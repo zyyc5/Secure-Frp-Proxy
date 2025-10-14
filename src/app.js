@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const configManager = require('./utils/config');
 const tcpProxy = require('./services/tcp-proxy');
+const httpsTerminator = require('./services/https-terminator');
 const frpc = require('./services/frpc-manager');
 const { basicAuth } = require('./utils/auth');
 const fs = require('fs').promises;
@@ -93,6 +94,8 @@ class App {
     // 启动TCP代理服务
     tcpProxy.start();
     console.log(`TCP代理服务已启动，监听端口: ${config.TCP_PROXY_PORT}`);
+    // 启动HTTPS终止服务（可选）
+    httpsTerminator.start();
     // 启动frpc服务
     if (await frpc.isInstalled()) {
       frpc.start();

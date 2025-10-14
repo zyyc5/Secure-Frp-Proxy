@@ -53,18 +53,17 @@ const normalizeIP = (remote)=>{
   return remote.startsWith('::ffff:') ? remote.substring(7) : remote;
 }
 
-// 工具函数：HTTP 判定
+// 工具函数：HTTP 判定（含 WebSocket 握手），大小写不敏感
+const HTTP_METHODS_RE = /^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH)\s/i;
+const HTTP_VERSION_RE = /HTTP\/(1\.[01]|2)/i;
+const WS_UPGRADE_RE = /\nupgrade:\s*websocket/i;
+const CONN_UPGRADE_RE = /\nconnection:\s*upgrade/i;
 const isHttpLikeText = (text)=>{
   if (!text) return false;
-  return text.startsWith('GET ') ||
-    text.startsWith('POST ') ||
-    text.startsWith('HEAD ') ||
-    text.startsWith('PUT ') ||
-    text.startsWith('DELETE ') ||
-    text.startsWith('OPTIONS ') ||
-    text.startsWith('PATCH ') ||
-    text.includes('HTTP/1.1') ||
-    text.includes('HTTP/2');
+  return HTTP_METHODS_RE.test(text) ||
+    HTTP_VERSION_RE.test(text) ||
+    WS_UPGRADE_RE.test(text) ||
+    CONN_UPGRADE_RE.test(text);
 }
 
 // 工具函数：从数据中解析 Host 子域前缀
