@@ -1,8 +1,14 @@
 {
   "PORT": 9108,
   "TCP_PROXY_PORT": 13389,
-  "USERNAME": "admin",
+  "USERNAME": "dell",
   "PASSWORD": "password123",
+  "HTTPS_TERMINATOR": {
+    "enabled": false,
+    "keyPath": "path/to/your/key.pem",
+    "certPath": "path/to/your/cert.pem",
+    "port": 443
+  },
   "PROXY_TARGETS": [
     {
       "id": "default",
@@ -37,6 +43,13 @@
       "name": "baidu",
       "host": "www.baidu.com",
       "port": 80,
+      "description": ""
+    },
+    {
+      "id": "1760595633645",
+      "name": "astock",
+      "host": "127.0.0.1",
+      "port": 3000,
       "description": ""
     }
   ],

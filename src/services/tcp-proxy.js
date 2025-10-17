@@ -70,6 +70,10 @@ const isHttpLikeText = (text)=>{
 const parseHostSubPrefix = (buf)=>{
   try {
     const headStr = buf.toString('utf8');
+    // console.log('headStr', headStr);
+    if(!headStr) {
+      console.log('headStr is empty');
+    }
     if (!isHttpLikeText(headStr)) return { isHttp: false, subPrefix: null };
     const hostMatch = headStr.match(/\n[Hh]ost:\s*([^\r\n]+)/);
     if (!hostMatch || !hostMatch[1]) return { isHttp: true, subPrefix: null };
@@ -126,13 +130,15 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
 // 创建 TCP 服务器
 const server = net.createServer((clientSocket) => {
   console.log('New connection received');
+  let isFirstData = true;
+const handleData = async (data) => {
+  try {
+    let clientIP = '';
+    let appData = data;
+    let isPpv2 = false;
 
-  clientSocket.once('data', async (data) => {
-    try {
-      let clientIP = '';
-      let appData = data;
-      let isPpv2 = false;
-
+    if(isFirstData) {
+      isFirstData = false;
       // 检查 Proxy Protocol v2 签名
       if (data.slice(0, 12).equals(PROXY_PROTOCOL_V2_SIGNATURE)) {
         const familyAndProtocol = data[13];
@@ -165,25 +171,34 @@ const server = net.createServer((clientSocket) => {
           return;
         }
       }
-
-      // 统一：Host 子域匹配与回退
-      const { isHttp, subPrefix } = parseHostSubPrefix(appData);
-      const chosen = selectTarget(subPrefix);
-      if (isHttp && chosen.matched) {
-        logger(`${isPpv2 ? 'ppv2 ' : ''}http host matched target by name: ${subPrefix} -> ${chosen.host}:${chosen.port}`);
-      } else if (isHttp) {
-        logger(`${isPpv2 ? 'ppv2 ' : ''}http host no match by name: ${subPrefix}, fallback to current target`);
-      }
-
-      // 建立转发
-      connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData);
-      
-    } catch (err) {
-      logger(`Error processing data: ${err.message}`);
-      console.error(`Error processing data: ${err.message}`);
-      clientSocket.end();
     }
-  });
+    
+    // 无数据, 等下次数据
+    if(!appData || appData.length === 0) {
+      clientSocket.once('data', handleData);
+      return;
+    }
+
+    // 统一：Host 子域匹配与回退
+    const { isHttp, subPrefix } = parseHostSubPrefix(appData);
+    const chosen = selectTarget(subPrefix);
+    if (isHttp && chosen.matched) {
+      logger(`${isPpv2 ? 'ppv2 ' : ''}http host matched target by name: ${subPrefix} -> ${chosen.host}:${chosen.port}`);
+    } else if (isHttp) {
+      logger(`${isPpv2 ? 'ppv2 ' : ''}http host no match by name: ${subPrefix}, fallback to current target`);
+    }
+
+    // 建立转发
+    connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData);
+    
+  } catch (err) {
+    logger(`Error processing data: ${err.message}`);
+    console.error(`Error processing data: ${err.message}`);
+    clientSocket.end();
+  }
+}
+
+  clientSocket.once('data', handleData);
 });
 
 // 服务器错误处理
