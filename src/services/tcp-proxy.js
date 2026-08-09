@@ -6,6 +6,7 @@ const configManager = require('../utils/config');
 
 // 配置
 const LOG_FILE = path.join(__dirname, '..', '..', 'log', 'proxy_connections.log'); // 日志文件路径
+const CONNECTION_TIMEOUT = 30000;
 
 // 获取当前代理目标地址
 const getCurrentProxyTarget = () => {
@@ -107,6 +108,12 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
     }
   );
 
+  upstream.setTimeout(CONNECTION_TIMEOUT, () => {
+    logger(`upstream timeout: ${target.host}:${target.port}`);
+    upstream.destroy();
+    clientSocket.destroy();
+  });
+
   clientSocket.pipe(upstream);
   upstream.pipe(clientSocket);
 
@@ -130,6 +137,10 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
 // 创建 TCP 服务器
 const server = net.createServer((clientSocket) => {
   console.log('New connection received');
+  clientSocket.setTimeout(CONNECTION_TIMEOUT, () => {
+    logger('client connection timeout');
+    clientSocket.destroy();
+  });
   let isFirstData = true;
 const handleData = async (data) => {
   try {

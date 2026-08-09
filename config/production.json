@@ -3,6 +3,11 @@
   "TCP_PROXY_PORT": 13389,
   "USERNAME": "admin",
   "PASSWORD": "password123",
+  "TRUST_PROXY": true,
+  "HTTPS_TERMINATOR": {
+    "enabled": false,
+    "port": 9443
+  },
   "PROXY_TARGETS": [
     {
       "id": "default",
@@ -19,10 +24,101 @@
       "description": ""
     },
     {
-      "id": "1751794933238",
+      "id": "1751795534929",
       "name": "ssh",
       "host": "192.168.50.35",
       "port": 22,
+      "description": ""
+    },
+    {
+      "id": "1751796295235",
+      "name": "ubutunSSH",
+      "host": "192.168.50.171",
+      "port": 22,
+      "description": "虚拟机ssh"
+    },
+    {
+      "id": "1751797129593",
+      "name": "NAS-SSH",
+      "host": "192.168.50.45",
+      "port": 22,
+      "description": ""
+    },
+    {
+      "id": "1751799012315",
+      "name": "旁路由ssh",
+      "host": "192.168.50.174",
+      "port": 22,
+      "description": ""
+    },
+    {
+      "id": "1751800103074",
+      "name": "home-server-rdp",
+      "host": "192.168.50.35",
+      "port": 3389,
+      "description": ""
+    },
+    {
+      "id": "1751966368256",
+      "name": "旁路由web",
+      "host": "192.168.50.174",
+      "port": 80,
+      "description": ""
+    },
+    {
+      "id": "1751967139130",
+      "name": "旁路由DNS",
+      "host": "192.168.50.174",
+      "port": 5380,
+      "description": ""
+    },
+    {
+      "id": "1752140298629",
+      "name": "clash",
+      "host": "192.168.50.174",
+      "port": 9090,
+      "description": ""
+    },
+    {
+      "id": "1752152415230",
+      "name": "ubutunDNS",
+      "host": "192.168.50.171",
+      "port": 5380,
+      "description": ""
+    },
+    {
+      "id": "1758793903365",
+      "name": "思源",
+      "host": "192.168.50.171",
+      "port": 6806,
+      "description": ""
+    },
+    {
+      "id": "1760885235419",
+      "name": "siyuan",
+      "host": "192.168.50.171",
+      "port": 6806,
+      "description": ""
+    },
+    {
+      "id": "1762650880173",
+      "name": "stock",
+      "host": "192.168.50.35",
+      "port": 3000,
+      "description": ""
+    },
+    {
+      "id": "1764574771215",
+      "name": "RDP-M",
+      "host": "192.168.50.35",
+      "port": 9107,
+      "description": ""
+    },
+    {
+      "id": "1780747347561",
+      "name": "sub2api",
+      "host": "192.168.50.171",
+      "port": 8188,
       "description": ""
     }
   ],

@@ -1,7 +1,7 @@
 const { exec } = require("child_process");
 const fs = require("fs").promises;
 const path = require("path");
-const whiteListPath = path.join(__dirname, "..", "..", "config", "whitelist.ini");
+const whiteListPath = path.join(process.env.CONFIG_DIR || path.join(__dirname, "..", "..", "config"), "whitelist.ini");
 
 // 配置
 const CHECK_INTERVAL = 60000; // 检查间隔：1分钟
@@ -17,7 +17,7 @@ class RDPManager {
     this.tempWhiteList = []; // {  ip: string, time: number }
     // 白名单
     this.whiteList = []; // ['127.0.0.1']
-    this.initWhiteList();
+    this.ready = this.initWhiteList();
   }
 
   /**
@@ -58,13 +58,14 @@ class RDPManager {
   }
 
   addWhiteList(ip) {
+    if (!ip || this.whiteList.includes(ip)) return;
     this.whiteList.push(ip);
-    fs.appendFile(whiteListPath, "\n" + ip);
+    return fs.appendFile(whiteListPath, "\n" + ip);
   }
 
   removeWhiteList(ip) {
     this.whiteList = this.whiteList.filter((item) => item !== ip);
-    fs.writeFile(whiteListPath, this.whiteList.join("\n"));
+    return fs.writeFile(whiteListPath, this.whiteList.join("\n") + "\n");
   }
 
   /**

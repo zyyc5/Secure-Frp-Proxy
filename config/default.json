@@ -1,13 +1,12 @@
 {
   "PORT": 9108,
   "TCP_PROXY_PORT": 13389,
-  "USERNAME": "dell",
+  "USERNAME": "admin",
   "PASSWORD": "password123",
+  "TRUST_PROXY": false,
   "HTTPS_TERMINATOR": {
     "enabled": false,
-    "keyPath": "path/to/your/key.pem",
-    "certPath": "path/to/your/cert.pem",
-    "port": 443
+    "port": 9443
   },
   "PROXY_TARGETS": [
     {

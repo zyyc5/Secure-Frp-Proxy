@@ -4,11 +4,14 @@ FROM node:18-alpine
 # 设置工作目录
 WORKDIR /app
 
+# 先升级基础系统以获取最新安全补丁
+RUN apk --no-cache update && apk --no-cache upgrade
+
 # 复制package.json和package-lock.json
 COPY package*.json ./
 
-# 安装依赖
-RUN npm ci --only=production
+# 安装生产依赖（不安装dev），减少漏洞面
+RUN npm ci --omit=dev
 
 # 复制源代码
 COPY src/ ./src/
@@ -39,7 +42,7 @@ RUN if [ ! -f /app/config/production.json ]; then cp /app/config/default.json /a
 # 更改文件所有权并设置正确的权限
 RUN chown -R nodejs:nodejs /app
 RUN chmod -R 755 /app
-RUN chmod -R 664 /app/config/*.json
+RUN chmod -R 664 /app/config/*.json || true
 RUN chmod 775 /app/config
 
 # 复制entrypoint脚本

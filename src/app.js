@@ -4,6 +4,8 @@ const configManager = require('./utils/config');
 const tcpProxy = require('./services/tcp-proxy');
 const httpsTerminator = require('./services/https-terminator');
 const frpc = require('./services/frpc-manager');
+const httpsFrpc = require('./services/https-frpc-manager');
+const rdpManager = require('./services/rdp-manager');
 const { basicAuth } = require('./utils/auth');
 const fs = require('fs').promises;
 const { exec } = require('child_process');
@@ -73,6 +75,7 @@ class App {
   }
 
   setupMiddleware() {
+    this.app.set('trust proxy', process.env.TRUST_PROXY === 'true' || configManager.get('TRUST_PROXY') === true);
     // 基本认证
     this.app.use(basicAuth);
     // 静态文件服务
@@ -90,12 +93,22 @@ class App {
   }
 
   async startServices() {
+    await rdpManager.ready;
     const config = configManager.getAll();
     // 启动TCP代理服务
     tcpProxy.start();
     console.log(`TCP代理服务已启动，监听端口: ${config.TCP_PROXY_PORT}`);
     // 启动HTTPS终止服务（可选）
-    httpsTerminator.start();
+    const httpsConfig = config.HTTPS_TERMINATOR;
+    if (httpsConfig?.enabled === true) {
+      httpsTerminator.start();
+      if (await httpsFrpc.isInstalled()) {
+        httpsFrpc.start();
+        console.log('HTTPS 独立 frpc 通道已启动');
+      } else {
+        console.warn('HTTPS 已启用，但未找到 frpc-https.toml 或 frpc 可执行文件');
+      }
+    }
     // 启动frpc服务
     if (await frpc.isInstalled()) {
       frpc.start();
@@ -108,6 +121,7 @@ class App {
   async stopServices() {
     // 停止TCP代理服务
     tcpProxy.stop();
+    await httpsFrpc.stop();
     console.log('TCP代理服务已停止');
     // 停止frpc服务
     await frpc.stop();

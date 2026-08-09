@@ -9,10 +9,10 @@ const basicAuth = (req, res, next) => {
       return res.status(500).send("服务器配置错误");
     }
     
-    const {
-      USERNAME = "admin",
-      PASSWORD = "password123",
-    } = config;
+    const { USERNAME, PASSWORD } = config;
+    if (!USERNAME || !PASSWORD) {
+      return res.status(503).send('Authentication is not configured');
+    }
 
     // 获取请求头中的认证信息
     const authHeader = req.headers.authorization;
@@ -23,8 +23,15 @@ const basicAuth = (req, res, next) => {
     }
 
     // 解析 Basic Auth 头
-    const auth = Buffer.from(authHeader.split(" ")[1], "base64").toString();
-    const [username, password] = auth.split(":");
+    const [scheme, encoded] = authHeader.split(/\s+/, 2);
+    if (!encoded || scheme.toLowerCase() !== 'basic') {
+      res.setHeader('WWW-Authenticate', 'Basic realm="Restricted Area"');
+      return res.status(401).send('Invalid authorization');
+    }
+    const auth = Buffer.from(encoded, 'base64').toString('utf8');
+    const separator = auth.indexOf(':');
+    const username = separator >= 0 ? auth.slice(0, separator) : '';
+    const password = separator >= 0 ? auth.slice(separator + 1) : '';
 
     // 验证用户名和密码
     if (username === USERNAME && password === PASSWORD) {
@@ -40,6 +47,7 @@ const basicAuth = (req, res, next) => {
 };
 
 const changePassword = async ({ userName, password }) => {
+  if (!userName || !password || password.length < 12) return false;
   try {
     configManager.set('USERNAME', userName);
     configManager.set('PASSWORD', password);

@@ -1,263 +1,37 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Secure FRP Proxy</title>
-  <!-- Element Plus CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
-  <!-- 自定义样式 -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Secure RDP Manager</title>
   <link rel="stylesheet" href="css/modern-styles.css">
 </head>
-
 <body>
-  <div id="app">
-    <!-- 加载状态 -->
-    <el-loading v-if="loading" :fullscreen="true" text="正在加载页面数据..."></el-loading>
+  <div id="loading" class="loading-screen"><span class="spinner"></span><span>正在加载控制台...</span></div>
+  <main id="app" class="shell" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">SR</span><div><strong>安全远程桌面管理</strong><small>内网服务访问网关</small></div></div>
+      <div class="top-actions"><span id="lastUpdated" class="muted">尚未同步</span><button id="refreshBtn" class="btn btn-quiet" title="刷新状态">刷新</button><button id="passwordBtn" class="btn btn-outline">账户</button></div>
+    </header>
 
-    <!-- 主内容区域 -->
-    <div v-show="!loading" class="app-container">
-      <!-- 头部 -->
-      <el-header class="app-header">
-        <div class="header-content">
-          <h1 class="app-title">
-            <el-icon>
-              <Monitor />
-            </el-icon>
-            Secure FRP Proxy
-          </h1>
-          <el-button @click="refreshData" :loading="refreshing" type="primary" size="small">
-            <el-icon>
-              <Refresh />
-            </el-icon>
-            刷新
-          </el-button>
-        </div>
-      </el-header>
+    <section class="hero"><div><p class="eyebrow">运维控制台</p><h1>网关运行概览</h1><p class="hero-copy">集中管理访问权限、代理目标和 FRP 隧道状态。</p></div><div id="overallBadge" class="overall-badge"><span class="pulse"></span><span>正在检查状态</span></div></section>
 
-      <!-- 主要内容 -->
-      <el-main class="app-main">
-        <el-row :gutter="20">
-          <!-- RDP服务状态卡片 - 仅在Windows系统显示 -->
-          <el-col :xs="24" :sm="12" :md="8" v-if="pageData.isWindows">
-            <el-card class="status-card" shadow="hover">
-              <template #header>
-                <div class="card-header">
-                  <el-icon>
-                    <Connection />
-                  </el-icon>
-                  <span>RDP服务状态</span>
-                </div>
-              </template>
-              <div class="status-content">
-                <div class="status-switch-container">
-                  <div class="status-info">
-                    <el-tag :type="getRdpStatusType()" size="large">
-                      {{ pageData.rdpStatus }}
-                    </el-tag>
-                  </div>
-                  <el-switch v-model="rdpSwitchValue" :loading="rdpLoading"
-                    :disabled="pageData.rdpEnableDisabled === 'none' && pageData.rdpDisableDisabled === 'none'"
-                    active-color="#67c23a" inactive-color="#f56c6c" @change="toggleRdp" />
-                </div>
-              </div>
-            </el-card>
-          </el-col>
+    <section class="status-grid">
+      <article id="rdpCard" class="status-panel" hidden><div class="panel-icon icon-blue">R</div><div class="panel-main"><div class="panel-label">RDP 服务</div><div id="rdpStatus" class="panel-value">--</div><div class="panel-meta">Windows 主机服务</div></div><button id="rdpToggle" class="switch" aria-label="切换 RDP 服务"><span></span></button></article>
+      <article class="status-panel"><div class="panel-icon icon-green">W</div><div class="panel-main"><div class="panel-label">当前访问权限</div><div id="whitelistStatus" class="panel-value">--</div><div id="clientIp" class="panel-meta">--</div></div><button id="whitelistToggle" class="switch" aria-label="切换白名单"><span></span></button></article>
+      <article class="status-panel"><div class="panel-icon icon-amber">F</div><div class="panel-main"><div class="panel-label">FRP 隧道</div><div id="proxyStatus" class="panel-value">--</div><div class="panel-meta">公网暴露状态</div></div><button id="proxyToggle" class="switch" aria-label="切换 FRP 代理"><span></span></button></article>
+      <article class="status-panel"><div class="panel-icon icon-blue">P</div><div class="panel-main"><div class="panel-label">公网监听端口</div><div id="publicPorts" class="panel-value ports-value">--</div><div class="panel-meta">frps 远端入口</div></div></article>
+    </section>
 
-          <!-- 白名单管理卡片 -->
-          <el-col :xs="24" :sm="12" :md="pageData.isWindows ? 8 : 12">
-            <el-card class="status-card" shadow="hover">
-              <template #header>
-                <div class="card-header">
-                  <el-icon>
-                    <User />
-                  </el-icon>
-                  <span>白名单管理</span>
-                </div>
-              </template>
-              <div class="status-content">
-                <div class="status-switch-container">
-                  <div class="status-info">
-                    <div class="ip-info">
-                      <!-- <el-text>当前IP：</el-text>
-                      <el-tag type="info"></el-tag> -->
-                    </div>
-                    <el-tag :type="getWhitelistStatusType()" class="ml-2">
-                      {{ pageData.IP }} <br>{{ pageData.whiteListStatus }}
-                    </el-tag>
-                  </div>
-                  <el-switch v-model="whitelistSwitchValue" :loading="whitelistLoading"
-                    :disabled="pageData.whiteListJoinDisabled === 'none' && pageData.whiteListRemoveDisabled === 'none'"
-                    active-color="#67c23a" inactive-color="#f56c6c" @change="toggleWhitelist" />
-                </div>
-              </div>
-            </el-card>
-          </el-col>
+    <section class="content-grid">
+      <article class="surface targets-surface"><div class="surface-head"><div><p class="eyebrow">路由管理</p><h2>代理目标</h2></div><button id="addTargetBtn" class="btn btn-primary">添加目标</button></div><div id="currentTarget" class="current-target"><span class="muted">当前路由</span><strong>--</strong></div><div class="table-wrap"><table class="targets-table"><thead><tr><th class="drag-col"></th><th>名称</th><th>地址</th><th>说明</th><th>状态</th><th class="actions-col">操作</th></tr></thead><tbody id="targetsList"></tbody></table></div><div id="emptyTargets" class="empty" hidden>暂未配置代理目标。</div></article>
+      <aside class="surface side-surface"><div class="surface-head"><div><p class="eyebrow">安全策略</p><h2>访问控制</h2></div></div><div class="security-row"><span class="security-dot"></span><div><strong>Basic Auth 认证</strong><p>管理接口已受到保护。</p></div></div><div class="security-row"><span class="security-dot"></span><div><strong>临时访问</strong><p id="accessDetail">--</p></div></div><div class="notice"><strong>保持网关私密</strong><p>仅通过可信网络或 TLS 终止器暴露 9108 和 13389 端口。</p></div></aside>
+    </section>
+  </main>
 
-          <!-- 代理状态卡片 -->
-          <el-col :xs="24" :sm="12" :md="pageData.isWindows ? 8 : 12">
-            <el-card class="status-card" shadow="hover">
-              <template #header>
-                <div class="card-header">
-                  <el-icon>
-                    <Share />
-                  </el-icon>
-                  <span>frp代理状态</span>
-                </div>
-              </template>
-              <div class="status-content">
-                <div class="status-switch-container">
-                  <div class="status-info">
-                    <el-tag :type="getProxyStatusType()" size="large">
-                      {{ pageData.proxyStatus }}
-                    </el-tag>
-                  </div>
-                  <el-switch v-model="proxySwitchValue" :loading="proxyLoading"
-                    :disabled="pageData.proxyOpenDisabled === 'none' && pageData.proxyCloseDisabled === 'none'"
-                    active-color="#67c23a" inactive-color="#f56c6c" @change="toggleProxy" />
-                </div>
-              </div>
-            </el-card>
-          </el-col>
-        </el-row>
-
-        <!-- 代理目标地址管理 -->
-        <el-card class="targets-card" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <el-icon>
-                <Location />
-              </el-icon>
-              <span>代理目标地址管理</span>
-              <el-button @click="showTargetDialog" type="primary" size="small">
-                <el-icon>
-                  <Plus />
-                </el-icon>
-                添加目标
-              </el-button>
-            </div>
-          </template>
-
-          <div class="current-target">
-            <el-text>当前目标：</el-text>
-            <el-tag type="primary" size="large">
-              {{ getCurrentTargetName() }}
-            </el-tag>
-          </div>
-
-          <el-empty v-if="proxyTargets.length === 0" description="暂无目标地址"></el-empty>
-          <el-row :gutter="16" v-if="proxyTargets.length > 0">
-            <el-col :xs="24" :sm="12" :md="8" v-for="target in proxyTargets" :key="target.id">
-              <el-card class="target-item" :class="{ 'current-target': target.id === currentTargetId }" shadow="hover">
-                <template #header>
-                  <div class="target-header">
-                    <span>{{ target.name }}</span>
-                    <el-tag v-if="target.id === currentTargetId" type="success" size="small">当前</el-tag>
-                  </div>
-                </template>
-                <div class="target-info">
-                  <el-descriptions :column="1" size="small">
-                    <el-descriptions-item label="地址">{{ target.host }}:{{ target.port }}</el-descriptions-item>
-                    <el-descriptions-item v-if="target.description" label="描述">{{ target.description
-                      }}</el-descriptions-item>
-                  </el-descriptions>
-                </div>
-                <div class="target-actions">
-                  <el-button v-if="target.id !== currentTargetId" @click="setCurrentTarget(target.id)" type="primary"
-                    size="small">
-                    设为当前
-                  </el-button>
-                  <el-button v-else disabled size="small">
-                    当前目标
-                  </el-button>
-                  <el-button @click="deleteTarget(target.id)" type="danger" size="small">
-                    删除
-                  </el-button>
-                </div>
-              </el-card>
-            </el-col>
-          </el-row>
-        </el-card>
-
-        <!-- 密码修改 -->
-        <el-card class="password-card" shadow="hover">
-          <template #header>
-            <div class="card-header">
-              <el-icon>
-                <Lock />
-              </el-icon>
-              <span>密码管理</span>
-            </div>
-          </template>
-          <el-button @click="showPasswordDialog" type="warning">
-            <el-icon>
-              <Edit />
-            </el-icon>
-            修改密码
-          </el-button>
-        </el-card>
-      </el-main>
-    </div>
-
-    <!-- 密码修改对话框 -->
-    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="400px">
-      <el-form :model="passwordForm" :rules="passwordRules" ref="passwordFormRef" label-width="80px">
-        <el-form-item label="用户名" prop="userName">
-          <el-input v-model="passwordForm.userName" placeholder="请输入用户名" />
-        </el-form-item>
-        <el-form-item label="新密码" prop="newPassword">
-          <el-input v-model="passwordForm.newPassword" type="password" placeholder="请输入新密码" show-password />
-        </el-form-item>
-        <el-form-item label="确认密码" prop="confirmPassword">
-          <el-input v-model="passwordForm.confirmPassword" type="password" placeholder="请确认新密码" show-password />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="passwordDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitPasswordChange" :loading="passwordLoading">
-            确认修改
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
-
-    <!-- 添加目标地址对话框 -->
-    <el-dialog v-model="targetDialogVisible" title="添加代理目标地址" width="500px">
-      <el-form :model="targetForm" :rules="targetRules" ref="targetFormRef" label-width="80px">
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="targetForm.name" placeholder="例如：办公室服务器" />
-        </el-form-item>
-        <el-form-item label="主机地址" prop="host">
-          <el-input v-model="targetForm.host" placeholder="例如：192.168.1.100" />
-        </el-form-item>
-        <el-form-item label="端口" prop="port">
-          <el-input-number v-model="targetForm.port" :min="1" :max="65535" placeholder="3389" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="描述" prop="description">
-          <el-input v-model="targetForm.description" type="textarea" :rows="3" placeholder="可选描述信息" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="targetDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitTargetAdd" :loading="targetLoading">
-            添加
-          </el-button>
-        </span>
-      </template>
-    </el-dialog>
-  </div>
-
-  <!-- Vue 3 Production -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <!-- Element Plus Production -->
-  <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
-  <!-- Element Plus Icons -->
-  <script src="https://unpkg.com/@element-plus/icons-vue@2.3.1/dist/index.iife.js"></script>
-  <!-- 应用脚本 -->
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="targetDialog" class="dialog"><form method="dialog" id="targetForm" novalidate><div class="dialog-head"><div><p class="eyebrow">路由管理</p><h2>添加代理目标</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="targetDialog">X</button></div><label>名称<input name="name" maxlength="40" required placeholder="办公 NAS"></label><label>主机地址<input name="host" maxlength="255" required placeholder="192.168.1.20"></label><label>端口<input name="port" type="number" min="1" max="65535" value="3389" required></label><label>描述<textarea name="description" maxlength="160" rows="3" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button type="button" class="btn btn-outline" data-close-dialog="targetDialog">取消</button><button type="submit" value="default" class="btn btn-primary">添加目标</button></div></form></dialog>
+  <dialog id="passwordDialog" class="dialog"><form method="dialog" id="passwordForm" novalidate><div class="dialog-head"><div><p class="eyebrow">账户管理</p><h2>更新登录凭据</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="passwordDialog">X</button></div><label>用户名<input name="userName" id="userName" required></label><label>新密码<input name="newPassword" type="password" minlength="12" required></label><label>确认密码<input name="confirmPassword" type="password" minlength="12" required></label><p class="form-hint">密码至少需要 12 位。</p><div class="dialog-actions"><button type="button" class="btn btn-outline" data-close-dialog="passwordDialog">取消</button><button type="submit" value="default" class="btn btn-primary">保存凭据</button></div></form></dialog>
   <script src="js/modern-app.js"></script>
 </body>
-
 </html>

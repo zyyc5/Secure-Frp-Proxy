@@ -1,14 +1,42 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const rdpManager = require('../services/rdp-manager');
 const frpc = require('../services/frpc-manager');
 const { changePassword, getUserName } = require('../utils/auth');
 const configManager = require('../utils/config');
 
+const readPublicPorts = () => {
+  const configDir = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
+  return [
+    { file: 'frpc.toml', channel: '普通通道' },
+    { file: 'frpc-https.toml', channel: 'HTTPS' }
+  ].flatMap(({ file, channel }) => {
+    try {
+      const content = fs.readFileSync(path.join(configDir, file), 'utf8');
+      const ports = [];
+      let currentName = file;
+      for (const line of content.split(/\r?\n/)) {
+        const name = line.match(/^\s*name\s*=\s*["']([^"']+)["']/);
+        if (name) currentName = name[1];
+        const port = line.match(/^\s*remotePort\s*=\s*(\d+)/);
+        if (port) ports.push({ name: currentName, port: Number(port[1]), channel });
+      }
+      return ports;
+    } catch (_) {
+      return [];
+    }
+  });
+};
+
 // 获取客户端IP地址
 const getIp = (req) => {
-  const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-  return ip.replace('::ffff:', '')
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip = req.app.get('trust proxy') && forwarded
+    ? forwarded.split(',')[0].trim()
+    : req.socket.remoteAddress;
+  return (ip || '').replace('::ffff:', '');
 };
 
 // 获取代理目标地址列表
@@ -28,7 +56,8 @@ router.get('/proxy-targets', (req, res) => {
 router.post('/proxy-targets', async (req, res) => {
   const { name, host, port, description } = req.body;
   
-  if (!name || !host || !port) {
+  const numericPort = Number(port);
+  if (!name || !host || !Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) {
     return res.status(400).json({ error: '名称、主机地址和端口为必填项' });
   }
   
@@ -42,7 +71,7 @@ router.post('/proxy-targets', async (req, res) => {
       id: Date.now().toString(),
       name,
       host,
-      port: parseInt(port),
+      port: numericPort,
       description: description || ''
     };
     
@@ -56,6 +85,25 @@ router.post('/proxy-targets', async (req, res) => {
   } catch (error) {
     console.error('保存配置失败:', error);
     res.status(500).json({ error: '保存配置失败' });
+  }
+});
+
+// 保存代理目标排序
+router.post('/proxy-targets/reorder', async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: '排序数据格式错误' });
+  try {
+    const config = configManager.getAll();
+    const targets = Array.isArray(config?.PROXY_TARGETS) ? config.PROXY_TARGETS : [];
+    if (ids.length !== targets.length || new Set(ids).size !== targets.length || targets.some((target) => !ids.includes(target.id))) {
+      return res.status(400).json({ error: '排序数据与目标列表不一致' });
+    }
+    configManager.set('PROXY_TARGETS', ids.map((id) => targets.find((target) => target.id === id)));
+    await configManager.saveConfig();
+    res.json({ success: true });
+  } catch (error) {
+    console.error('保存目标排序失败:', error);
+    res.status(500).json({ error: '保存目标排序失败' });
   }
 });
 
@@ -188,12 +236,13 @@ router.post('/change-password', async (req, res) => {
     return res.status(400).json({ error: '两次输入的密码不一致！' });
   }
 
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: '密码长度必须至少6位！' });
+  if (!newPassword || newPassword.length < 12) {
+    return res.status(400).json({ error: '密码长度必须至少12位！' });
   }
 
   try {
-    await changePassword({ userName, password: newPassword });
+    const changed = await changePassword({ userName, password: newPassword });
+    if (!changed) return res.status(400).json({ error: '密码不符合要求或保存失败' });
     res.json({ success: true, message: '密码修改成功，请使用新密码重新登录！' });
   } catch (error) {
     console.error('密码修改失败:', error);
@@ -234,6 +283,7 @@ router.get('/page-data', async (req, res) => {
       whiteListJoinDisabled: !isInWhiteList ? 'block' : 'none',
       userName: getUserName() || '未登录',
       IP: ip,
+      publicPorts: readPublicPorts(),
       whiteListStatus: whiteListStatus
     };
 

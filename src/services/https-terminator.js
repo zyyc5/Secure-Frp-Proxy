@@ -7,6 +7,12 @@ const rdpManager = require('./rdp-manager');
 
 // 日志
 const LOG_FILE = path.join(__dirname, '..', '..', 'log', 'https_terminator.log');
+const CONNECTION_TIMEOUT = 30000;
+const MAX_HTTP_HEADER_SIZE = 64 * 1024;
+const CERTIFICATE_DIR = 'certs';
+const CERTIFICATE_FILE = 'fullchain.cer';
+const PRIVATE_KEY_FILE = 'privkey.key';
+const getConfigDir = () => process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const logger = (log)=>{
   const logEntry = `${new Date().toLocaleString()} - ${log} \n`;
   console.log(logEntry);
@@ -71,6 +77,12 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
     }
   );
 
+  upstream.setTimeout(CONNECTION_TIMEOUT, () => {
+    logger(`upstream timeout: ${target.host}:${target.port}`);
+    upstream.destroy();
+    clientSocket.destroy();
+  });
+
   clientSocket.pipe(upstream);
   upstream.pipe(clientSocket);
 
@@ -102,14 +114,19 @@ const start = () => {
   }
 
   try {
-    const key = fs.readFileSync(httpsCfg.keyPath);
-    const cert = fs.readFileSync(httpsCfg.certPath);
+    const certificateDir = path.join(getConfigDir(), CERTIFICATE_DIR);
+    const keyPath = path.join(certificateDir, PRIVATE_KEY_FILE);
+    const certPath = path.join(certificateDir, CERTIFICATE_FILE);
+    const key = fs.readFileSync(keyPath);
+    const cert = fs.readFileSync(certPath);
 
     server = tls.createServer({
       key,
       cert,
-      ALPNProtocols: ['h2', 'http/1.1']
+      minVersion: 'TLSv1.2',
+      ALPNProtocols: ['http/1.1']
     }, (tlsSocket) => {
+      tlsSocket.setTimeout(CONNECTION_TIMEOUT, () => tlsSocket.destroy());
       const ip = normalizeIP(tlsSocket.remoteAddress || '');
       if(!rdpManager.isAnyWhiteList(ip)){
         logger(`refuse https connent: ${ip}`);
@@ -117,8 +134,17 @@ const start = () => {
         return;
       }
 
-      tlsSocket.once('data', (data) => {
-        const { isHttp, subPrefix } = parseHostSubPrefix(data);
+      let firstPacket = Buffer.alloc(0);
+      const onData = (data) => {
+        firstPacket = Buffer.concat([firstPacket, data]);
+        if (firstPacket.length > MAX_HTTP_HEADER_SIZE) {
+          logger(`https request header too large: ${ip}`);
+          tlsSocket.destroy();
+          return;
+        }
+        if (!firstPacket.includes('\r\n\r\n')) return;
+        tlsSocket.off('data', onData);
+        const { isHttp, subPrefix } = parseHostSubPrefix(firstPacket);
         const chosen = selectTarget(subPrefix);
         if (isHttp && chosen.matched) {
           logger(`https http host matched: ${subPrefix} -> ${chosen.host}:${chosen.port}`);
@@ -127,11 +153,15 @@ const start = () => {
         } else {
           logger('https non-http traffic, fallback to current');
         }
-        connectAndPipe(tlsSocket, { host: chosen.host, port: chosen.port }, data);
-      });
+        connectAndPipe(tlsSocket, { host: chosen.host, port: chosen.port }, firstPacket);
+      };
+      tlsSocket.on('data', onData);
     });
 
     const port = httpsCfg.port || 443;
+    server.on('error', (error) => {
+      console.error('HTTPS Terminator error:', error.message);
+    });
     server.listen(port, () => {
       console.log(`HTTPS Terminator listening on port ${port}`);
     });
@@ -144,6 +174,7 @@ const stop = () => {
   if (server) {
     server.close(() => {
       console.log('HTTPS Terminator stopped');
+      server = null;
     });
   }
 }

@@ -48,6 +48,7 @@ class ConfigManager {
 
       // 应用环境变量覆盖
       this.applyEnvironmentOverrides();
+      this.validate();
 
       console.log(`配置文件已加载: ${this.configPath}`);
       return this.config;
@@ -62,16 +63,33 @@ class ConfigManager {
    */
   applyEnvironmentOverrides() {
     if (process.env.PORT) {
-      this.config.PORT = parseInt(process.env.PORT);
+      this.config.PORT = Number(process.env.PORT);
     }
     if (process.env.TCP_PROXY_PORT) {
-      this.config.TCP_PROXY_PORT = parseInt(process.env.TCP_PROXY_PORT);
+      this.config.TCP_PROXY_PORT = Number(process.env.TCP_PROXY_PORT);
     }
     if (process.env.USERNAME) {
       this.config.USERNAME = process.env.USERNAME;
     }
     if (process.env.PASSWORD) {
       this.config.PASSWORD = process.env.PASSWORD;
+    }
+  }
+
+  validate() {
+    const c = this.config;
+    if (!c || !c.USERNAME || !c.PASSWORD) throw new Error('USERNAME and PASSWORD are required');
+    for (const key of ['PORT', 'TCP_PROXY_PORT']) {
+      if (!Number.isInteger(c[key]) || c[key] < 1 || c[key] > 65535) {
+        throw new Error(`${key} must be an integer between 1 and 65535`);
+      }
+    }
+    if (!Array.isArray(c.PROXY_TARGETS)) c.PROXY_TARGETS = [];
+    for (const target of c.PROXY_TARGETS) {
+      if (!target || !target.name || !target.host || !Number.isInteger(Number(target.port)) || Number(target.port) < 1 || Number(target.port) > 65535) {
+        throw new Error('Invalid proxy target');
+      }
+      target.port = Number(target.port);
     }
   }
 
@@ -108,7 +126,9 @@ class ConfigManager {
       await fs.access(path.dirname(this.configPath), fs.constants.W_OK);
       
       // 尝试写入文件
-      await fs.writeFile(this.configPath, JSON.stringify(this.config, null, 2), 'utf8');
+      const tempPath = `${this.configPath}.${process.pid}.tmp`;
+      await fs.writeFile(tempPath, JSON.stringify(this.config, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
+      await fs.rename(tempPath, this.configPath);
       console.log(`配置已保存到: ${this.configPath}`);
     } catch (err) {
       console.error('保存配置文件失败:', err);
