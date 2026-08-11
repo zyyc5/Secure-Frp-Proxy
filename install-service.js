@@ -8,7 +8,7 @@ const appSvc = new Service({
   name: "SecureFrp-ProxyService",
   description: "Secure Expose RDP service",
   runAsAdmin: true,
-  script: path.join(__dirname, "src", "app.js"),
+  script: path.join(__dirname, "src", "production.js"),
 });
 
 appSvc.on("install", () => {
@@ -18,7 +18,7 @@ appSvc.on("install", () => {
 appSvc.on("start", async () => {
   console.log("Windows服务已启动");
   try {
-    await configManager.loadConfig();
+    await configManager.loadConfig("production");
     const config = configManager.getAll();
     const port = config.PORT || 9108;
     exec(`start http://127.0.0.1:${port}`);
@@ -40,7 +40,7 @@ if (!appSvc.exists) {
   console.log("Windows服务已存在");
   (async () => {
     try {
-      await configManager.loadConfig();
+      await configManager.loadConfig("production");
       const config = configManager.getAll();
       const port = config.PORT || 9108;
       exec(`start http://127.0.0.1:${port}`);

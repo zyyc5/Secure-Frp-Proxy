@@ -101,8 +101,8 @@ node deploy-local/deploy.js
 | `CONFIG_DIR` | 配置文件目录 |
 | `PORT` | Web 管理端口，默认 `9108` |
 | `TCP_PROXY_PORT` | TCP 代理端口，默认 `13389` |
-| `USERNAME` | Basic Auth 用户名 |
-| `PASSWORD` | Basic Auth 密码 |
+| `APP_USERNAME` | Basic Auth 用户名，覆盖配置文件 |
+| `APP_PASSWORD` | Basic Auth 密码，覆盖配置文件 |
 | `TRUST_PROXY` | 设为 `true` 时信任受控反向代理的 `X-Forwarded-For` |
 
 配置会在启动时校验端口、凭据和代理目标；Web 修改配置时使用原子写入，避免并发写坏 JSON。

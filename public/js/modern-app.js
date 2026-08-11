@@ -84,9 +84,9 @@
     button.addEventListener('click', () => $(button.dataset.closeDialog).close());
   });
   $('targetForm').addEventListener('submit', async (event) => {
-    event.preventDefault(); const form = new FormData(event.currentTarget); const data = Object.fromEntries(form.entries()); data.port = Number(data.port);
+    event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement); const data = Object.fromEntries(form.entries()); data.port = Number(data.port);
     if (!data.name || !data.host || !Number.isInteger(data.port) || data.port < 1 || data.port > 65535) return toast('请填写有效的名称、主机地址和端口', true);
-    try { await request('/api/proxy-targets', { method: 'POST', body: JSON.stringify(data) }); event.currentTarget.reset(); $('targetDialog').close(); toast('目标已添加'); await load(); } catch (error) { toast(error.message, true); }
+    try { await request('/api/proxy-targets', { method: 'POST', body: JSON.stringify(data) }); formElement.reset(); $('targetDialog').close(); toast('目标已添加'); await load(); } catch (error) { toast(error.message, true); }
   });
   $('passwordForm').addEventListener('submit', async (event) => {
     event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget).entries());

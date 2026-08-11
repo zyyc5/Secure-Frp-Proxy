@@ -4,9 +4,9 @@
   "description": "安全的暴露和管理你的内网服务",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "NODE_ENV=default node src/app.js",
-    "prod": "NODE_ENV=production node src/app.js",
+    "start": "node src/production.js",
+    "dev": "node src/app.js",
+    "prod": "node src/production.js",
     "install-service": "node install-service.js",
     "uninstall-service": "node uninstall-service.js"
   },

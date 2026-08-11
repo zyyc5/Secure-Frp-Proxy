@@ -2,6 +2,7 @@ daemon
 node_modules
 */frpc.toml
 config/frpc-https.toml
+config/production.json
 package-lock.json
 *.log
 *.ini
@@ -16,3 +17,4 @@ secure-frp-proxy-update.tar
 deploy-local/
 cert-output/
 config/certs/
+production.json

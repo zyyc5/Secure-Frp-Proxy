@@ -5,7 +5,7 @@ const appSvc = new Service({
   name: "SecureFrp-ProxyService",
   description: "Secure Expose RDP service",
   runAsAdmin: true,
-  script: path.join(__dirname, "app.js")
+  script: path.join(__dirname, "src", "production.js")
 });
 
 appSvc.on("stop", () => {

@@ -26,9 +26,10 @@ class App {
       console.log('Setting up application permissions...');
       
       // 确保配置文件目录存在
-      const configDir = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
-      const logDir = path.join(__dirname, '..', '..', 'log');
-      const frpcDir = path.join(__dirname, '..', '..', 'frpc');
+      const projectDir = path.join(__dirname, '..');
+      const configDir = process.env.CONFIG_DIR || path.join(projectDir, 'config');
+      const logDir = path.join(projectDir, 'log');
+      const frpcDir = path.join(projectDir, 'frpc');
       
       // 创建必要的目录
       await fs.mkdir(configDir, { recursive: true });

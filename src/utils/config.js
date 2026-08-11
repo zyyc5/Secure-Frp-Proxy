@@ -68,11 +68,11 @@ class ConfigManager {
     if (process.env.TCP_PROXY_PORT) {
       this.config.TCP_PROXY_PORT = Number(process.env.TCP_PROXY_PORT);
     }
-    if (process.env.USERNAME) {
-      this.config.USERNAME = process.env.USERNAME;
+    if (process.env.APP_USERNAME) {
+      this.config.USERNAME = process.env.APP_USERNAME;
     }
-    if (process.env.PASSWORD) {
-      this.config.PASSWORD = process.env.PASSWORD;
+    if (process.env.APP_PASSWORD) {
+      this.config.PASSWORD = process.env.APP_PASSWORD;
     }
   }
 
