@@ -5,19 +5,16 @@ const path = require('path');
 const configManager = require('../utils/config');
 const rdpManager = require('./rdp-manager');
 const { parseProxyProtocolV2 } = require('../utils/proxy-protocol');
+const { createDailyLogger } = require('../utils/logger');
 
-const LOG_FILE = path.join(__dirname, '..', '..', 'log', 'https_terminator.log');
+const LOG_DIRECTORY = path.join(__dirname, '..', '..', 'log');
 const CONNECTION_TIMEOUT = 30000;
 const MAX_HTTP_HEADER_SIZE = 64 * 1024;
 const CERTIFICATE_DIR = 'certs';
 const CERTIFICATE_FILE = 'fullchain.cer';
 const PRIVATE_KEY_FILE = 'privkey.key';
 const getConfigDir = () => process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
-const logger = (log) => {
-  const logEntry = `${new Date().toLocaleString()} - ${log} \n`;
-  console.log(logEntry);
-  fs.appendFile(LOG_FILE, logEntry, {}, () => {});
-};
+const logger = createDailyLogger(LOG_DIRECTORY, 'https_terminator');
 
 const HTTP_METHODS_RE = /^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH)\s/i;
 const HTTP_VERSION_RE = /HTTP\/(1\.[01]|2)/i;

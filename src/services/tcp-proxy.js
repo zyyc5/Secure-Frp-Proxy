@@ -1,12 +1,12 @@
 const net = require('net');
-const fs = require('fs');
 const path = require('path');
 const rdpManager = require('./rdp-manager');
 const configManager = require('../utils/config');
+const { createDailyLogger } = require('../utils/logger');
 
 // 配置
-const LOG_FILE = path.join(__dirname, '..', '..', 'log', 'proxy_connections.log'); // 日志文件路径
 const CONNECTION_TIMEOUT = 30000;
+const LOG_DIRECTORY = path.join(__dirname, '..', '..', 'log');
 
 // 获取当前代理目标地址
 const getCurrentProxyTarget = () => {
@@ -41,11 +41,7 @@ const PROXY_PROTOCOL_V2_SIGNATURE = Buffer.from([
   0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A
 ]);
 
-const logger = (log)=>{
-  const logEntry = `${new Date().toLocaleString()} - ${log} \n`;
-  console.log(logEntry);
-  fs.appendFile(LOG_FILE, logEntry, {}, ()=>{});
-}
+const logger = createDailyLogger(LOG_DIRECTORY, 'proxy_connections');
 
 // 工具函数：规范化 IP
 const normalizeIP = (remote)=>{
