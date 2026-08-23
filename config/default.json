@@ -6,7 +6,8 @@
   "TRUST_PROXY": false,
   "HTTPS_TERMINATOR": {
     "enabled": false,
-    "port": 9443
+    "port": 9443,
+    "host": "127.0.0.1"
   },
   "PROXY_TARGETS": [
     {

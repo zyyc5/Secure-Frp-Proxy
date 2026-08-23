@@ -122,6 +122,7 @@ class App {
   async stopServices() {
     // 停止TCP代理服务
     tcpProxy.stop();
+    httpsTerminator.stop();
     await httpsFrpc.stop();
     console.log('TCP代理服务已停止');
     // 停止frpc服务

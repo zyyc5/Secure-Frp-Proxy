@@ -146,9 +146,9 @@ Copy-Item config/frpc-https.toml.example config/frpc-https.toml
 }
 ```
 
-HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 独立 frpc 配置可通过 `FRPC_HTTPS_CONFIG` 指定路径。
+HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 独立 frpc 配置可通过 `FRPC_HTTPS_CONFIG` 指定路径。HTTPS 独立通道必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR.host` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
 
-例如公网入口配置为 `remotePort = 9943` 时，访问地址为 `https://<目标名称>.<域名>:9943/`。证书的 SAN 必须覆盖完整访问域名。HTTPS 原始 TCP 通道不会携带客户端 IP；通过 frp HTTP 代理访问管理页面时，只有在受控代理可信的情况下设置 `TRUST_PROXY=true`，应用才会读取 `X-Forwarded-For`。
+例如公网入口配置为 `remotePort = 9943` 时，访问地址为 `https://<目标名称>.<域名>:9943/`。证书的 SAN 必须覆盖完整访问域名。HTTPS 终止器会拒绝不含有效 Proxy Protocol v2 头的连接，因此其监听端口应只对受控 frpc 或本机开放。通过 frp HTTP 代理访问管理页面时，只有在受控代理可信的情况下设置 `TRUST_PROXY=true`，应用才会读取 `X-Forwarded-For`。
 
 ## Web 控制台
 

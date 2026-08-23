@@ -2,10 +2,11 @@ serverAddr = "xxx.yourdomainorip.com"
 serverPort = 7000
 auth.token = "yourtoken"
 
-# HTTPS 独立通道。不要添加 Proxy Protocol v2，TLS 必须直接从 ClientHello 开始。
+# HTTPS 独立通道。HTTPS Terminator 会在 TLS 握手前解析并移除 Proxy Protocol v2。
 [[proxies]]
 name = "https-qicheen"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 9443
 remotePort = 443
+transport.proxyProtocolVersion = "v2"
