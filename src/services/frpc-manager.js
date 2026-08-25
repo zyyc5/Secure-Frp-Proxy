@@ -16,7 +16,10 @@ const getFrpcPath = () => {
 // frpc 可执行文件路径
 const frpcPath = getFrpcPath();
 // frpc 配置文件路径
-const configPath = path.join(__dirname, "..", "..", "config", "frpc.toml");
+const configPath = path.join(
+  process.env.CONFIG_DIR || path.join(__dirname, "..", "..", "config"),
+  "frpc.toml"
+);
 
 class FrpcManager {
   constructor() {
@@ -211,4 +214,4 @@ class FrpcManager {
 
 const frpcManager = new FrpcManager();
 
-module.exports = frpcManager; 
+module.exports = frpcManager;

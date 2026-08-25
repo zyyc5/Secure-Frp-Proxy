@@ -4,7 +4,6 @@ const configManager = require('./utils/config');
 const tcpProxy = require('./services/tcp-proxy');
 const httpsTerminator = require('./services/https-terminator');
 const frpc = require('./services/frpc-manager');
-const httpsFrpc = require('./services/https-frpc-manager');
 const rdpManager = require('./services/rdp-manager');
 const { basicAuth } = require('./utils/auth');
 const fs = require('fs').promises;
@@ -103,12 +102,6 @@ class App {
     const httpsConfig = config.HTTPS_TERMINATOR;
     if (httpsConfig?.enabled === true) {
       httpsTerminator.start();
-      if (await httpsFrpc.isInstalled()) {
-        httpsFrpc.start();
-        console.log('HTTPS 独立 frpc 通道已启动');
-      } else {
-        console.warn('HTTPS 已启用，但未找到 frpc-https.toml 或 frpc 可执行文件');
-      }
     }
     // 启动frpc服务
     if (await frpc.isInstalled()) {
@@ -123,7 +116,6 @@ class App {
     // 停止TCP代理服务
     tcpProxy.stop();
     httpsTerminator.stop();
-    await httpsFrpc.stop();
     console.log('TCP代理服务已停止');
     // 停止frpc服务
     await frpc.stop();

@@ -25,3 +25,13 @@ localPort = 13389
 remotePort = 19954 # 对应frps的暴露端口
 
 transport.proxyProtocolVersion = "v2"
+
+# HTTPS terminator. Enable HTTPS_TERMINATOR in production.json before using it.
+# Proxy Protocol v2 is required so the terminator can enforce the client IP whitelist.
+[[proxies]]
+name = "https-rdp-manager"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 9443
+remotePort = 443
+transport.proxyProtocolVersion = "v2"

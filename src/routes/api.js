@@ -9,25 +9,20 @@ const configManager = require('../utils/config');
 
 const readPublicPorts = () => {
   const configDir = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
-  return [
-    { file: 'frpc.toml', channel: '普通通道' },
-    { file: 'frpc-https.toml', channel: 'HTTPS' }
-  ].flatMap(({ file, channel }) => {
-    try {
-      const content = fs.readFileSync(path.join(configDir, file), 'utf8');
-      const ports = [];
-      let currentName = file;
-      for (const line of content.split(/\r?\n/)) {
-        const name = line.match(/^\s*name\s*=\s*["']([^"']+)["']/);
-        if (name) currentName = name[1];
-        const port = line.match(/^\s*remotePort\s*=\s*(\d+)/);
-        if (port) ports.push({ name: currentName, port: Number(port[1]), channel });
-      }
-      return ports;
-    } catch (_) {
-      return [];
+  try {
+    const content = fs.readFileSync(path.join(configDir, 'frpc.toml'), 'utf8');
+    const ports = [];
+    let currentName = 'frpc.toml';
+    for (const line of content.split(/\r?\n/)) {
+      const name = line.match(/^\s*name\s*=\s*["']([^"']+)["']/);
+      if (name) currentName = name[1];
+      const port = line.match(/^\s*remotePort\s*=\s*(\d+)/);
+      if (port) ports.push({ name: currentName, port: Number(port[1]), channel: 'FRP' });
     }
-  });
+    return ports;
+  } catch (_) {
+    return [];
+  }
 };
 
 // 获取客户端IP地址

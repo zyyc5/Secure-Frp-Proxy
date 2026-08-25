@@ -1,5 +1,9 @@
 # Secure RDP Manager
 
+## frpc HTTPS 配置
+
+HTTPS 与其他隧道共用 `config/frpc.toml` 和同一个 frpc 进程。启用 `HTTPS_TERMINATOR` 后，在该文件新增一个 `localPort = 9443` 的 TCP 代理；必须设置 `transport.proxyProtocolVersion = "v2"`，以便 HTTPS Terminator 校验真实客户端 IP。`config/frpc.toml.example` 已提供完整示例，不再使用 `frpc-https.toml` 或 `FRPC_HTTPS_CONFIG`。
+
 Secure RDP Manager 是一个基于 Node.js/Express 的内网服务访问网关，提供 Web 管理界面、TCP 代理、Proxy Protocol v2、IP 白名单和 frpc 内网穿透能力。
 
 ![Web 控制台截图](layout-current.png)
@@ -125,15 +129,15 @@ Copy-Item config/frpc.toml.example config/frpc.toml
 
 frpc 日志中看到 `login to server success` 且每个代理出现 `start proxy success`，表示隧道已建立。
 
-### HTTPS 独立通道
+### HTTPS 通道
 
-HTTPS 不使用原有的 `frpc.toml` 或 RDP/TCP 通道。启用时需要创建独立配置：
+HTTPS 与其他 RDP/TCP 通道共用 `frpc.toml` 和同一个 frpc 进程。启用前确认该文件中已包含 HTTPS 代理：
 
 ```powershell
-Copy-Item config/frpc-https.toml.example config/frpc-https.toml
+# HTTPS 代理示例已包含在 config/frpc.toml.example 中
 ```
 
-在 `frpc-https.toml` 中设置独立的代理名称和 `remotePort`，并保持 `localPort = 9443`。不要为该代理配置 `transport.proxyProtocolVersion = "v2"`，否则 TLS 握手会失败。
+在 `frpc.toml` 中设置唯一的 HTTPS 代理名称和 `remotePort`，并保持 `localPort = 9443`。该代理必须配置 `transport.proxyProtocolVersion = "v2"`。
 
 应用配置示例：
 
@@ -146,7 +150,7 @@ Copy-Item config/frpc-https.toml.example config/frpc-https.toml
 }
 ```
 
-HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 独立 frpc 配置可通过 `FRPC_HTTPS_CONFIG` 指定路径。HTTPS 独立通道必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR.host` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
+HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 代理配置在 `frpc.toml` 中，且必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR.host` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
 
 例如公网入口配置为 `remotePort = 9943` 时，访问地址为 `https://<目标名称>.<域名>:9943/`。证书的 SAN 必须覆盖完整访问域名。HTTPS 终止器会拒绝不含有效 Proxy Protocol v2 头的连接，因此其监听端口应只对受控 frpc 或本机开放。通过 frp HTTP 代理访问管理页面时，只有在受控代理可信的情况下设置 `TRUST_PROXY=true`，应用才会读取 `X-Forwarded-For`。
 
