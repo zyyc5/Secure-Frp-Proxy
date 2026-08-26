@@ -8,6 +8,7 @@
     "dev": "node src/app.js",
     "prod": "node src/production.js",
     "test": "node --test",
+    "sync-control-plane": "node scripts/sync-control-plane.js",
     "install-service": "node install-service.js",
     "uninstall-service": "node uninstall-service.js"
   },
