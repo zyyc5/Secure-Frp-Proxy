@@ -3,6 +3,7 @@ const path = require('node:path');
 const { loadEnvFile, setEnvValue } = require('../src/utils/env');
 
 const DAY = 24 * 60 * 60 * 1000;
+const isHttpsTerminatorEnabled = () => process.env.HTTPS_TERMINATOR_ENABLED?.trim().toLowerCase() === 'true';
 
 const required = (name) => {
   const value = process.env[name]?.trim();
@@ -52,6 +53,7 @@ const certificateFilesExist = async (configDir) => {
 };
 
 const syncCertificate = async ({ configDir, envPath, baseUrl, apiKey, fetchFn, setEnvValueFn = setEnvValue, writeFileFn = writeFile }) => {
+  if (!isHttpsTerminatorEnabled()) return { checked: false, updated: false, skipped: 'https_terminator_disabled' };
   const domain = process.env.CONTROL_PLANE_CERT_DOMAIN?.trim();
   if (!domain) return { checked: false, updated: false };
 
@@ -99,13 +101,20 @@ const syncControlPlane = async ({ configDir, fetchFn, setEnvValueFn = setEnvValu
     process.env.CONTROL_PLANE_CLIENT_ID = clientId;
   }
   await writeFileFn(frpcPath, initialization.frpcConfig);
-  const certificate = await syncCertificate({ ...environment, baseUrl, apiKey, fetchFn, setEnvValueFn, writeFileFn });
+  let certificate;
+  try {
+    certificate = await syncCertificate({ ...environment, baseUrl, apiKey, fetchFn, setEnvValueFn, writeFileFn });
+  } catch (error) {
+    certificate = { checked: true, updated: false, error: error.message };
+    console.warn(`Certificate sync skipped: ${error.message}`);
+  }
   console.log(`FRPC configuration for ${clientId} saved to ${frpcPath}`);
   return { clientId, frpcPath, certificate };
 };
 
 const checkCertificateUpdate = async ({ configDir, fetchFn, setEnvValueFn, writeFileFn } = {}) => {
   const environment = await loadControlPlaneEnvironment(configDir);
+  if (!isHttpsTerminatorEnabled()) return { checked: false, updated: false, skipped: 'https_terminator_disabled' };
   return syncCertificate({ ...environment, baseUrl: required('CONTROL_PLANE_URL'), apiKey: required('CONTROL_PLANE_API_KEY'), fetchFn, setEnvValueFn, writeFileFn });
 };
 

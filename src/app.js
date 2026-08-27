@@ -184,9 +184,11 @@ class App {
     } catch (error) {
       console.error(`Control-plane startup sync failed: ${error.message}`);
     }
-    this.stopCertificateUpdateScheduler = startCertificateUpdateScheduler({
-      onUpdated: () => httpsTerminator.reloadCertificates()
-    });
+    if (process.env.HTTPS_TERMINATOR_ENABLED === 'true') {
+      this.stopCertificateUpdateScheduler = startCertificateUpdateScheduler({
+        onUpdated: () => httpsTerminator.reloadCertificates()
+      });
+    }
   }
 }
 
