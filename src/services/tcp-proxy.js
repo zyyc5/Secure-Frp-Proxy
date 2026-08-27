@@ -3,6 +3,7 @@ const path = require('path');
 const rdpManager = require('./rdp-manager');
 const configManager = require('../utils/config');
 const { createDailyLogger } = require('../utils/logger');
+const { parseProxyProtocolV2 } = require('../utils/proxy-protocol');
 
 // 配置
 const CONNECTION_TIMEOUT = 30000;
@@ -36,12 +37,13 @@ const getCurrentProxyTarget = () => {
   }
 };
 
-// Proxy Protocol v2 签名
-const PROXY_PROTOCOL_V2_SIGNATURE = Buffer.from([
-  0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A
-]);
-
 const logger = createDailyLogger(LOG_DIRECTORY, 'proxy_connections');
+let nextConnectionSequence = 0;
+
+const createConnectionId = () => {
+  nextConnectionSequence = (nextConnectionSequence + 1) % 1_000_000;
+  return `tcp-${Date.now().toString(36)}-${nextConnectionSequence}`;
+};
 
 // 工具函数：规范化 IP
 const normalizeIP = (remote)=>{
@@ -96,16 +98,17 @@ const selectTarget = (subPrefix)=>{
 }
 
 // 建立转发并写入首包
-const connectAndPipe = (clientSocket, target, firstPacket)=>{
+const connectAndPipe = (clientSocket, target, firstPacket, log) => {
   const upstream = net.createConnection(
     { host: target.host, port: target.port },
     () => {
       if (firstPacket && firstPacket.length > 0) upstream.write(firstPacket);
+      log(`upstream connected target=${target.host}:${target.port}`);
     }
   );
 
   upstream.setTimeout(CONNECTION_TIMEOUT, () => {
-    logger(`upstream timeout: ${target.host}:${target.port}`);
+    log(`upstream timeout target=${target.host}:${target.port}`);
     upstream.destroy();
     clientSocket.destroy();
   });
@@ -115,15 +118,16 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
 
   upstream.on('error', (err) => {
     console.error(`Upstream socket error: ${err.message}`);
+    log(`upstream error target=${target.host}:${target.port} error=${err.message}`);
     clientSocket.end();
   });
   clientSocket.on('error', (err) => {
     console.error(`Client socket error: ${err.message}`);
+    log(`client socket error error=${err.message}`);
     upstream.end();
   });
   upstream.on('end', () => {
     clientSocket.end();
-    logger('connection closed');
   });
   clientSocket.on('end', () => {
     upstream.end();
@@ -132,78 +136,74 @@ const connectAndPipe = (clientSocket, target, firstPacket)=>{
 
 // 创建 TCP 服务器
 const server = net.createServer((clientSocket) => {
-  console.log('New connection received');
+  const connectionId = createConnectionId();
+  const log = (message) => logger(`connection=${connectionId} ${message}`);
+  log(`opened peer=${normalizeIP(clientSocket.remoteAddress || '')}:${clientSocket.remotePort || 'unknown'}`);
   clientSocket.setTimeout(CONNECTION_TIMEOUT, () => {
-    logger('client connection timeout');
+    log('client connection timeout');
     clientSocket.destroy();
   });
+  clientSocket.once('close', (hadError) => log(`closed had_error=${hadError}`));
   let isFirstData = true;
-const handleData = async (data) => {
-  try {
-    let clientIP = '';
-    let appData = data;
-    let isPpv2 = false;
+  let received = Buffer.alloc(0);
+  const handleData = (data) => {
+    try {
+      let clientIP = '';
+      let appData = data;
 
-    if(isFirstData) {
-      isFirstData = false;
-      // 检查 Proxy Protocol v2 签名
-      if (data.slice(0, 12).equals(PROXY_PROTOCOL_V2_SIGNATURE)) {
-        const familyAndProtocol = data[13];
-        const length = data.readUInt16BE(14);
-        const addressFamily = familyAndProtocol >> 4;
-        const protocol = familyAndProtocol & 0x0F;
-        if (protocol !== 0x1) throw new Error('Unsupported protocol (only TCP supported)');
-        if (addressFamily === 0x1) {
-          clientIP = `${data[16]}.${data[17]}.${data[18]}.${data[19]}`;
-        } else if (addressFamily === 0x2) {
-          const ipv6Bytes = data.slice(16, 32);
-          clientIP = ipv6Bytes.toString('hex').match(/.{1,4}/g).join(':').replace(/(^|:)0+/g, '$1');
+      if(isFirstData) {
+        received = Buffer.concat([received, data]);
+        const proxyHeader = parseProxyProtocolV2(received);
+        if (!proxyHeader.complete) {
+          clientSocket.once('data', handleData);
+          return;
+        }
+        isFirstData = false;
+        if (proxyHeader.present) {
+          clientIP = proxyHeader.clientIP;
+          log(`accepted ip=${clientIP} proxy_protocol=v2`);
+          if(!rdpManager.isAnyWhiteList(clientIP)){
+            log(`refused ip=${clientIP} reason=not_whitelisted`);
+            clientSocket.end();
+            return;
+          }
+          appData = received.slice(proxyHeader.headerLength);
         } else {
-          throw new Error('Unsupported address family');
-        }
-        logger(`new connent: ${clientIP}`);
-        if(!rdpManager.isAnyWhiteList(clientIP)){
-          logger(`refuse connent: ${clientIP}`);
-          clientSocket.end();
-          return;
-        }
-        appData = data.slice(16 + length);
-        isPpv2 = true;
-      } else {
-        clientIP = normalizeIP(clientSocket.remoteAddress || '');
-        logger(`new connent(no proxy proto): ${clientIP}`);
-        if(!rdpManager.isAnyWhiteList(clientIP)){
-          logger(`refuse connent: ${clientIP}`);
-          clientSocket.end();
-          return;
+          clientIP = normalizeIP(clientSocket.remoteAddress || '');
+          log(`accepted ip=${clientIP} proxy_protocol=absent`);
+          if(!rdpManager.isAnyWhiteList(clientIP)){
+            log(`refused ip=${clientIP} reason=not_whitelisted`);
+            clientSocket.end();
+            return;
+          }
         }
       }
-    }
-    
-    // 无数据, 等下次数据
-    if(!appData || appData.length === 0) {
-      clientSocket.once('data', handleData);
-      return;
-    }
 
-    // 统一：Host 子域匹配与回退
-    const { isHttp, subPrefix } = parseHostSubPrefix(appData);
-    const chosen = selectTarget(subPrefix);
-    if (isHttp && chosen.matched) {
-      logger(`${isPpv2 ? 'ppv2 ' : ''}http host matched target by name: ${subPrefix} -> ${chosen.host}:${chosen.port}`);
-    } else if (isHttp) {
-      logger(`${isPpv2 ? 'ppv2 ' : ''}http host no match by name: ${subPrefix}, fallback to current target`);
-    }
+      // 无数据, 等下次数据
+      if(!appData || appData.length === 0) {
+        clientSocket.once('data', handleData);
+        return;
+      }
 
-    // 建立转发
-    connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData);
-    
-  } catch (err) {
-    logger(`Error processing data: ${err.message}`);
-    console.error(`Error processing data: ${err.message}`);
-    clientSocket.end();
-  }
-}
+      // 统一：Host 子域匹配与回退
+      const { isHttp, subPrefix } = parseHostSubPrefix(appData);
+      const chosen = selectTarget(subPrefix);
+      if (isHttp && chosen.matched) {
+        log(`route protocol=http host=${subPrefix} target=${chosen.host}:${chosen.port} matched=true`);
+      } else if (isHttp) {
+        log(`route protocol=http host=${subPrefix || 'unknown'} target=${chosen.host}:${chosen.port} matched=false`);
+      } else {
+        log(`route protocol=tcp target=${chosen.host}:${chosen.port}`);
+      }
+
+      // 建立转发
+      connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData, log);
+    } catch (err) {
+      log(`processing error error=${err.message}`);
+      console.error(`Error processing data: ${err.message}`);
+      clientSocket.end();
+    }
+  };
 
   clientSocket.once('data', handleData);
 });
