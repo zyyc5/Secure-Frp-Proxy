@@ -1,5 +1,6 @@
 daemon
 node_modules
+.env
 */frpc.toml
 config/frpc-https.toml
 config/production.json
