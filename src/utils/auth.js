@@ -51,7 +51,8 @@ const changePassword = async ({ userName, password }) => {
   try {
     configManager.set('USERNAME', userName);
     configManager.set('PASSWORD', password);
-    await configManager.saveConfig();
+    await configManager.saveEnvironmentValue('APP_USERNAME', userName);
+    await configManager.saveEnvironmentValue('APP_PASSWORD', password);
     return true;
   } catch (error) {
     console.log(error);

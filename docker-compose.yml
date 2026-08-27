@@ -9,10 +9,6 @@ services:
       - "13389:13389" # TCP代理端口
     environment:
       - NODE_ENV=production
-      - PORT=9108
-      - TCP_PROXY_PORT=13389
-      - APP_USERNAME=admin
-      - APP_PASSWORD=password123
     volumes:
       - ./config:/app/config # 配置文件挂载
       - ./frpc:/app/frpc # frpc可执行文件挂载

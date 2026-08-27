@@ -203,6 +203,24 @@ const start = () => {
   }
 };
 
+const reloadCertificates = () => {
+  if (!tlsServer) return false;
+  try {
+    const certificateDir = path.join(getConfigDir(), CERTIFICATE_DIR);
+    tlsServer.setSecureContext({
+      key: fs.readFileSync(path.join(certificateDir, PRIVATE_KEY_FILE)),
+      cert: fs.readFileSync(path.join(certificateDir, CERTIFICATE_FILE)),
+      minVersion: 'TLSv1.2',
+      ALPNProtocols: ['http/1.1']
+    });
+    console.log('HTTPS Terminator certificate reloaded');
+    return true;
+  } catch (error) {
+    console.error('Failed to reload HTTPS Terminator certificate:', error.message);
+    return false;
+  }
+};
+
 const stop = () => {
   if (server) {
     server.close(() => {
@@ -213,4 +231,4 @@ const stop = () => {
   }
 };
 
-module.exports = { start, stop };
+module.exports = { start, stop, reloadCertificates };

@@ -42,7 +42,7 @@ RUN if [ ! -f /app/config/production.json ]; then cp /app/config/default.json /a
 # 更改文件所有权并设置正确的权限
 RUN chown -R nodejs:nodejs /app
 RUN chmod -R 755 /app
-RUN chmod -R 664 /app/config/*.json || true
+RUN chmod -R 664 /app/config/*.json /app/config/.env || true
 RUN chmod 775 /app/config
 
 # 复制entrypoint脚本
@@ -50,4 +50,4 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod +x /app/docker-entrypoint.sh
 
 # 使用entrypoint脚本
-ENTRYPOINT ["/app/docker-entrypoint.sh"] 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

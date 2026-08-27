@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const { loadEnvFile, setEnvValue } = require('./env');
 
 class ConfigManager {
   constructor() {
@@ -15,6 +16,8 @@ class ConfigManager {
     try {
       // 尝试从环境变量获取配置文件路径
       const configDir = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
+      this.envPath = path.join(configDir, '.env');
+      await loadEnvFile(this.envPath);
       const configFile = path.join(configDir, `${env}.json`);
       
       // 检查配置文件是否存在
@@ -74,6 +77,20 @@ class ConfigManager {
     if (process.env.APP_PASSWORD) {
       this.config.PASSWORD = process.env.APP_PASSWORD;
     }
+    if (process.env.TRUST_PROXY !== undefined) {
+      this.config.TRUST_PROXY = process.env.TRUST_PROXY === 'true';
+    }
+    const httpsTerminator = this.config.HTTPS_TERMINATOR || {};
+    if (process.env.HTTPS_TERMINATOR_ENABLED !== undefined) {
+      httpsTerminator.enabled = process.env.HTTPS_TERMINATOR_ENABLED === 'true';
+    }
+    if (process.env.HTTPS_TERMINATOR_PORT) {
+      httpsTerminator.port = Number(process.env.HTTPS_TERMINATOR_PORT);
+    }
+    if (process.env.HTTPS_TERMINATOR_HOST) {
+      httpsTerminator.host = process.env.HTTPS_TERMINATOR_HOST;
+    }
+    this.config.HTTPS_TERMINATOR = httpsTerminator;
   }
 
   validate() {
@@ -146,6 +163,12 @@ class ConfigManager {
       
       throw err;
     }
+  }
+
+  async saveEnvironmentValue(key, value) {
+    if (!this.envPath) throw new Error('环境配置未加载');
+    await setEnvValue(this.envPath, key, value);
+    process.env[key] = String(value);
   }
 
   /**

@@ -13,8 +13,14 @@ setup_permissions() {
     
     # Create directories if they don't exist
     mkdir -p /app/config /app/log /app/frpc
-    
-    # Ensure production.json exists
+
+    # Ensure the static configuration file exists.
+    if [ ! -f /app/config/.env ]; then
+        echo "Creating .env from .env.example..."
+        cp /app/config/.env.example /app/config/.env 2>/dev/null || true
+    fi
+
+    # Ensure production.json exists for dynamic proxy target settings.
     if [ ! -f /app/config/production.json ]; then
         echo "Creating production.json from default.json..."
         cp /app/config/default.json /app/config/production.json 2>/dev/null || true
@@ -26,7 +32,7 @@ setup_permissions() {
     
     # Set permissions
     echo "Setting file permissions..."
-    chmod -R 664 /app/config/*.json 2>/dev/null || true
+    chmod -R 664 /app/config/*.json /app/config/.env 2>/dev/null || true
     chmod 775 /app/config /app/log /app/frpc
     
     # Verify permissions
@@ -41,4 +47,4 @@ setup_permissions
 
 # Start application as root (application will handle user switching internally)
 echo "Starting application..."
-exec npm start 
+exec npm start

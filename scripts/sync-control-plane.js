@@ -1,21 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { loadEnvFile, setEnvValue } = require('../src/utils/env');
 
-const loadEnvFile = async () => {
-  const envPath = path.join(__dirname, '..', '.env');
-  let content;
-  try { content = await fs.readFile(envPath, 'utf8'); } catch (error) {
-    if (error.code === 'ENOENT') return;
-    throw error;
-  }
-  for (const line of content.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    let value = match[2];
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    process.env[match[1]] = value;
-  }
-};
+const DAY = 24 * 60 * 60 * 1000;
 
 const required = (name) => {
   const value = process.env[name]?.trim();
@@ -30,34 +17,120 @@ const writeFile = async (filePath, content) => {
   await fs.rename(temporaryPath, filePath);
 };
 
-const request = async (baseUrl, apiKey, requestPath, options = {}) => {
-  const response = await fetch(new URL(`/api/v1${requestPath}`, baseUrl), { ...options, headers: { 'X-API-Key': apiKey, ...(options.headers || {}) } });
+const request = async (baseUrl, apiKey, requestPath, options = {}, fetchFn = fetch) => {
+  const response = await fetchFn(new URL(`/api/v1${requestPath}`, baseUrl), {
+    ...options,
+    headers: { 'X-API-Key': apiKey, ...(options.headers || {}) }
+  });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${requestPath}: ${body.message || body.error || response.status}`);
   return body;
 };
 
-(async () => {
-  await loadEnvFile();
+const getConfigDir = (configDir) => path.resolve(configDir || process.env.CONFIG_DIR || path.join(__dirname, '..', 'config'));
+
+const loadControlPlaneEnvironment = async (configDir) => {
+  const resolvedConfigDir = getConfigDir(configDir);
+  const envPath = path.join(resolvedConfigDir, '.env');
+  await loadEnvFile(envPath);
+  return { configDir: resolvedConfigDir, envPath };
+};
+
+const certificatePaths = (configDir) => ({
+  certificate: path.join(configDir, 'certs', 'fullchain.cer'),
+  privateKey: path.join(configDir, 'certs', 'privkey.key')
+});
+
+const certificateFilesExist = async (configDir) => {
+  const files = certificatePaths(configDir);
+  try {
+    await Promise.all([fs.access(files.certificate), fs.access(files.privateKey)]);
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+const syncCertificate = async ({ configDir, envPath, baseUrl, apiKey, fetchFn, setEnvValueFn = setEnvValue, writeFileFn = writeFile }) => {
+  const domain = process.env.CONTROL_PLANE_CERT_DOMAIN?.trim();
+  if (!domain) return { checked: false, updated: false };
+
+  const domainPath = `/domains/${encodeURIComponent(domain)}`;
+  const metadata = await request(baseUrl, apiKey, domainPath, {}, fetchFn);
+  const currentVersion = process.env.CONTROL_PLANE_CERTIFICATE_VERSION?.trim();
+  const hasFiles = await certificateFilesExist(configDir);
+  if (metadata.version && metadata.version === currentVersion && hasFiles) {
+    return { checked: true, updated: false, version: metadata.version };
+  }
+
+  const certificate = await request(baseUrl, apiKey, `${domainPath}/certificate`, {}, fetchFn);
+  if (!certificate.certificate || !certificate.privateKey) throw new Error('Certificate response is incomplete');
+  const files = certificatePaths(configDir);
+  await writeFileFn(files.certificate, certificate.certificate);
+  await writeFileFn(files.privateKey, certificate.privateKey);
+  const version = certificate.version || metadata.version;
+  if (version) {
+    await setEnvValueFn(envPath, 'CONTROL_PLANE_CERTIFICATE_VERSION', version);
+    process.env.CONTROL_PLANE_CERTIFICATE_VERSION = version;
+  }
+  console.log(`Certificate ${domain} version ${version || 'current'} saved to ${path.dirname(files.certificate)}`);
+  return { checked: true, updated: true, version };
+};
+
+const syncControlPlane = async ({ configDir, fetchFn, setEnvValueFn = setEnvValue, writeFileFn = writeFile } = {}) => {
+  const environment = await loadControlPlaneEnvironment(configDir);
   const baseUrl = required('CONTROL_PLANE_URL');
   const apiKey = required('CONTROL_PLANE_API_KEY');
-  const clientId = required('CONTROL_PLANE_CLIENT_ID');
-  const tcpLocalPort = Number(process.env.CONTROL_PLANE_TCP_LOCAL_PORT || 13389);
-  const httpsLocalPort = Number(process.env.CONTROL_PLANE_HTTPS_LOCAL_PORT || 9443);
-  const configDir = path.resolve(process.env.CONFIG_DIR || path.join(__dirname, '..', 'config'));
-  const frpcPath = path.resolve(process.env.CONTROL_PLANE_FRPC_PATH || path.join(configDir, 'frpc.control-plane.toml'));
-  const initialization = await request(baseUrl, apiKey, `/clients/${encodeURIComponent(clientId)}/initialize`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tcpLocalPort, httpsLocalPort })
-  });
-  await writeFile(frpcPath, initialization.frpcConfig);
+  let clientId = process.env.CONTROL_PLANE_CLIENT_ID?.trim();
+  const needsClientId = !clientId;
 
-  const certificateDomain = process.env.CONTROL_PLANE_CERT_DOMAIN?.trim();
-  if (certificateDomain) {
-    const certificate = await request(baseUrl, apiKey, `/domains/${encodeURIComponent(certificateDomain)}/certificate`);
-    const certificateDir = path.join(configDir, 'certs');
-    await writeFile(path.join(certificateDir, 'fullchain.cer'), certificate.certificate);
-    await writeFile(path.join(certificateDir, 'privkey.key'), certificate.privateKey);
-    console.log(`Certificate ${certificateDomain} version ${certificate.version || 'current'} saved to ${certificateDir}`);
+  const tcpLocalPort = Number(process.env.CONTROL_PLANE_TCP_LOCAL_PORT || process.env.TCP_PROXY_PORT || 13389);
+  const httpsLocalPort = Number(process.env.CONTROL_PLANE_HTTPS_LOCAL_PORT || process.env.HTTPS_TERMINATOR_PORT || 9443);
+  const frpcPath = path.resolve(process.env.CONTROL_PLANE_FRPC_PATH || path.join(environment.configDir, 'frpc.toml'));
+  const initializationPath = needsClientId ? '/clients/initialize' : `/clients/${encodeURIComponent(clientId)}/initialize`;
+  const initialization = await request(baseUrl, apiKey, initializationPath, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tcpLocalPort, httpsLocalPort })
+  }, fetchFn);
+
+  if (needsClientId) {
+    clientId = initialization.clientId?.trim();
+    if (!clientId) throw new Error('Control plane did not return a clientId');
+    await setEnvValueFn(environment.envPath, 'CONTROL_PLANE_CLIENT_ID', clientId);
+    process.env.CONTROL_PLANE_CLIENT_ID = clientId;
   }
+  await writeFileFn(frpcPath, initialization.frpcConfig);
+  const certificate = await syncCertificate({ ...environment, baseUrl, apiKey, fetchFn, setEnvValueFn, writeFileFn });
   console.log(`FRPC configuration for ${clientId} saved to ${frpcPath}`);
-})().catch((error) => { console.error(`Control-plane sync failed: ${error.message}`); process.exit(1); });
+  return { clientId, frpcPath, certificate };
+};
+
+const checkCertificateUpdate = async ({ configDir, fetchFn, setEnvValueFn, writeFileFn } = {}) => {
+  const environment = await loadControlPlaneEnvironment(configDir);
+  return syncCertificate({ ...environment, baseUrl: required('CONTROL_PLANE_URL'), apiKey: required('CONTROL_PLANE_API_KEY'), fetchFn, setEnvValueFn, writeFileFn });
+};
+
+const startCertificateUpdateScheduler = ({ onUpdated, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, intervalMs = DAY, ...options } = {}) => {
+  let stopped = false;
+  let timer;
+  const schedule = () => {
+    timer = setTimeoutFn(async () => {
+      try {
+        const result = await checkCertificateUpdate(options);
+        if (result.updated) await onUpdated?.(result);
+      } catch (error) {
+        console.error(`Certificate update check failed: ${error.message}`);
+      } finally {
+        if (!stopped) schedule();
+      }
+    }, intervalMs);
+    timer.unref?.();
+  };
+  schedule();
+  return () => { stopped = true; if (timer) clearTimeoutFn(timer); };
+};
+
+if (require.main === module) {
+  syncControlPlane().catch((error) => { console.error(`Control-plane sync failed: ${error.message}`); process.exitCode = 1; });
+}
+
+module.exports = { DAY, certificatePaths, checkCertificateUpdate, startCertificateUpdateScheduler, syncControlPlane };

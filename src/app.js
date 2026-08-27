@@ -9,6 +9,7 @@ const { basicAuth } = require('./utils/auth');
 const fs = require('fs').promises;
 const { exec } = require('child_process');
 const util = require('util');
+const { startCertificateUpdateScheduler, syncControlPlane } = require('../scripts/sync-control-plane');
 
 // 路由
 const indexRouter = require('./routes/index');
@@ -18,6 +19,7 @@ class App {
   constructor() {
     this.app = express();
     this.server = null;
+    this.stopCertificateUpdateScheduler = null;
   }
 
   async setupPermissions() {
@@ -35,7 +37,7 @@ class App {
       await fs.mkdir(logDir, { recursive: true });
       await fs.mkdir(frpcDir, { recursive: true });
       
-      // 确保production.json存在
+      // 确保用于保存动态代理目标的production.json存在
       const productionConfig = path.join(configDir, 'production.json');
       const defaultConfig = path.join(configDir, 'default.json');
       
@@ -58,7 +60,7 @@ class App {
           await execAsync(`chown -R 1001:1001 "${configDir}" "${logDir}" "${frpcDir}"`);
           
           // 设置文件权限
-          await execAsync(`chmod -R 664 "${configDir}"/*.json`);
+          await execAsync(`chmod -R 664 "${configDir}"/*.json "${configDir}"/.env`);
           await execAsync(`chmod 775 "${configDir}" "${logDir}" "${frpcDir}"`);
           
           console.log('File permissions set successfully');
@@ -113,6 +115,8 @@ class App {
   }
 
   async stopServices() {
+    this.stopCertificateUpdateScheduler?.();
+    this.stopCertificateUpdateScheduler = null;
     // 停止TCP代理服务
     tcpProxy.stop();
     httpsTerminator.stop();
@@ -129,6 +133,7 @@ class App {
     // 2. 启动前强制加载配置
     const env = process.env.NODE_ENV || 'default';
     await configManager.loadConfig(env);
+    await this.syncControlPlane();
     
     // 3. 初始化中间件和路由
     this.setupMiddleware();
@@ -169,6 +174,18 @@ class App {
       } else {
         process.exit(0);
       }
+    });
+  }
+
+  async syncControlPlane() {
+    if (!process.env.CONTROL_PLANE_URL || !process.env.CONTROL_PLANE_API_KEY) return;
+    try {
+      await syncControlPlane();
+    } catch (error) {
+      console.error(`Control-plane startup sync failed: ${error.message}`);
+    }
+    this.stopCertificateUpdateScheduler = startCertificateUpdateScheduler({
+      onUpdated: () => httpsTerminator.reloadCertificates()
     });
   }
 }

@@ -27,11 +27,12 @@ Secure RDP Manager 是一个基于 Node.js/Express 的内网服务访问网关�
 1. 准备配置文件：
 
    ```powershell
+   Copy-Item config/.env.example config/.env
    Copy-Item config/default.json config/production.json
    Copy-Item config/frpc.toml.example config/frpc.toml
    ```
 
-2. 编辑 `config/production.json` 和 `config/frpc.toml`，至少修改管理密码、frps 地址和 token。
+2. 编辑 `config/.env` 和 `config/frpc.toml`，至少修改管理密码、frps 地址和 token。`production.json` 只保存可在 Web 控制台修改的代理目标。
 
 3. 启动：
 
@@ -76,25 +77,17 @@ node deploy-local/deploy.js
 
 ## 配置
 
-默认配置文件为 `config/default.json`，生产环境通常使用 `config/production.json`。可通过 `CONFIG_DIR` 指定配置目录。
+静态部署配置保存在 `config/.env`，可从 `config/.env.example` 创建。代理目标等动态数据保存在 `config/default.json`，生产环境通常使用 `config/production.json`。可通过 `CONFIG_DIR` 指定配置目录。
 
-```json
-{
-  "PORT": 9108,
-  "TCP_PROXY_PORT": 13389,
-  "USERNAME": "admin",
-  "PASSWORD": "请替换为强密码",
-  "PROXY_TARGETS": [
-    {
-      "id": "default",
-      "name": "默认服务器",
-      "host": "127.0.0.1",
-      "port": 3389,
-      "description": "本地 RDP 服务"
-    }
-  ],
-  "CURRENT_PROXY_TARGET": "default"
-}
+```dotenv
+PORT=9108
+TCP_PROXY_PORT=13389
+APP_USERNAME=admin
+APP_PASSWORD=请替换为强密码
+TRUST_PROXY=false
+HTTPS_TERMINATOR_ENABLED=false
+HTTPS_TERMINATOR_PORT=9443
+HTTPS_TERMINATOR_HOST=127.0.0.1
 ```
 
 支持的环境变量：
@@ -103,11 +96,14 @@ node deploy-local/deploy.js
 | --- | --- |
 | `NODE_ENV` | `default` 或 `production` |
 | `CONFIG_DIR` | 配置文件目录 |
-| `PORT` | Web 管理端口，默认 `9108` |
-| `TCP_PROXY_PORT` | TCP 代理端口，默认 `13389` |
-| `APP_USERNAME` | Basic Auth 用户名，覆盖配置文件 |
-| `APP_PASSWORD` | Basic Auth 密码，覆盖配置文件 |
+| `PORT` | Web 管理端口 |
+| `TCP_PROXY_PORT` | TCP 代理端口 |
+| `APP_USERNAME` | Basic Auth 用户名 |
+| `APP_PASSWORD` | Basic Auth 密码 |
 | `TRUST_PROXY` | 设为 `true` 时信任受控反向代理的 `X-Forwarded-For` |
+| `HTTPS_TERMINATOR_ENABLED` | 设为 `true` 时启用 HTTPS Terminator |
+| `HTTPS_TERMINATOR_PORT` | HTTPS Terminator 监听端口 |
+| `HTTPS_TERMINATOR_HOST` | HTTPS Terminator 监听地址 |
 
 配置会在启动时校验端口、凭据和代理目标；Web 修改配置时使用原子写入，避免并发写坏 JSON。
 
@@ -141,16 +137,17 @@ HTTPS 与其他 RDP/TCP 通道共用 `frpc.toml` 和同一个 frpc 进程。启�
 
 应用配置示例：
 
-```json
-{
-  "HTTPS_TERMINATOR": {
-    "enabled": true,
-    "port": 9443
-  }
-}
+```dotenv
+HTTPS_TERMINATOR_ENABLED=true
+HTTPS_TERMINATOR_PORT=9443
+HTTPS_TERMINATOR_HOST=127.0.0.1
 ```
 
-HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 代理配置在 `frpc.toml` 中，且必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR.host` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
+HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 代理配置在 `frpc.toml` 中，且必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR_HOST` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
+
+### 控制面同步
+
+配置 `CONTROL_PLANE_URL`、`CONTROL_PLANE_API_KEY` 后，应用启动时会同步 FRPC 配置和证书。`CONTROL_PLANE_CLIENT_ID` 留空时由控制面生成并写回 `config/.env`。证书会保存为 `config/certs/fullchain.cer` 与 `config/certs/privkey.key`，当前版本记录在 `CONTROL_PLANE_CERTIFICATE_VERSION`；应用随后每 24 小时检查一次，仅在版本变化或本地文件缺失时更新。
 
 例如公网入口配置为 `remotePort = 9943` 时，访问地址为 `https://<目标名称>.<域名>:9943/`。证书的 SAN 必须覆盖完整访问域名。HTTPS 终止器会拒绝不含有效 Proxy Protocol v2 头的连接，因此其监听端口应只对受控 frpc 或本机开放。通过 frp HTTP 代理访问管理页面时，只有在受控代理可信的情况下设置 `TRUST_PROXY=true`，应用才会读取 `X-Forwarded-For`。
 
@@ -195,7 +192,7 @@ docker-compose.yml            Compose 编排
 
 ## 安全建议
 
-- 不要提交真实的 `config/production.json`、`config/frpc.toml`、`config/whitelist.ini` 或日志文件。
+- 不要提交真实的 `config/.env`、`config/production.json`、`config/frpc.toml`、`config/whitelist.ini` 或日志文件。
 - 首次部署必须替换默认密码，并通过环境变量或 secret 注入生产凭据。
 - 管理端建议放在 HTTPS 或可信内网之后，不要直接暴露到公网。
 - 仅在使用可信反向代理时设置 `TRUST_PROXY=true`。
