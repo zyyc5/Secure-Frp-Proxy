@@ -4,6 +4,7 @@ const rdpManager = require('./rdp-manager');
 const configManager = require('../utils/config');
 const { createDailyLogger } = require('../utils/logger');
 const { parseProxyProtocolV2 } = require('../utils/proxy-protocol');
+const { ForwardedForTransform } = require('../utils/http-forwarded-for');
 
 // 配置
 const CONNECTION_TIMEOUT = 30000;
@@ -19,20 +20,23 @@ const getCurrentProxyTarget = () => {
     if (target) {
       return {
         host: target.host,
-        port: target.port
+        port: target.port,
+        access: target.access
       };
     }
     
     // 如果没有找到目标，使用默认配置
     return {
       host: '127.0.0.1',
-      port: '3389'
+      port: '3389',
+      access: 'protected'
     };
   } catch (error) {
     console.error('获取代理目标失败:', error);
     return {
       host: '127.0.0.1',
-      port: 3389
+      port: 3389,
+      access: 'protected'
     };
   }
 };
@@ -91,18 +95,25 @@ const selectTarget = (subPrefix)=>{
   const config = configManager.getAll();
   if (subPrefix && Array.isArray(config?.PROXY_TARGETS)) {
     const hit = config.PROXY_TARGETS.find(t => String(t?.name || '').toLowerCase() === subPrefix.toLowerCase());
-    if (hit) return { host: hit.host, port: hit.port, matched: true };
+    if (hit) return { host: hit.host, port: hit.port, access: hit.access, matched: true };
   }
   const fb = getCurrentProxyTarget();
-  return { host: fb.host, port: fb.port, matched: false };
+  return { host: fb.host, port: fb.port, access: fb.access, matched: false };
 }
 
 // 建立转发并写入首包
-const connectAndPipe = (clientSocket, target, firstPacket, log) => {
+const connectAndPipe = (clientSocket, target, firstPacket, log, requestTransform = null) => {
   const upstream = net.createConnection(
     { host: target.host, port: target.port },
     () => {
-      if (firstPacket && firstPacket.length > 0) upstream.write(firstPacket);
+      if (requestTransform) {
+        requestTransform.pipe(upstream);
+        if (firstPacket && firstPacket.length > 0) requestTransform.write(firstPacket);
+        clientSocket.pipe(requestTransform);
+      } else {
+        if (firstPacket && firstPacket.length > 0) upstream.write(firstPacket);
+        clientSocket.pipe(upstream);
+      }
       log(`upstream connected target=${target.host}:${target.port}`);
     }
   );
@@ -113,7 +124,6 @@ const connectAndPipe = (clientSocket, target, firstPacket, log) => {
     clientSocket.destroy();
   });
 
-  clientSocket.pipe(upstream);
   upstream.pipe(clientSocket);
 
   upstream.on('error', (err) => {
@@ -125,6 +135,11 @@ const connectAndPipe = (clientSocket, target, firstPacket, log) => {
     console.error(`Client socket error: ${err.message}`);
     log(`client socket error error=${err.message}`);
     upstream.end();
+  });
+  requestTransform?.on('error', (err) => {
+    log(`request transform error target=${target.host}:${target.port} error=${err.message}`);
+    upstream.destroy();
+    clientSocket.destroy();
   });
   upstream.on('end', () => {
     clientSocket.end();
@@ -162,20 +177,10 @@ const server = net.createServer((clientSocket) => {
         if (proxyHeader.present) {
           clientIP = proxyHeader.clientIP;
           log(`accepted ip=${clientIP} proxy_protocol=v2`);
-          if(!rdpManager.isAnyWhiteList(clientIP)){
-            log(`refused ip=${clientIP} reason=not_whitelisted`);
-            clientSocket.end();
-            return;
-          }
           appData = received.slice(proxyHeader.headerLength);
         } else {
           clientIP = normalizeIP(clientSocket.remoteAddress || '');
           log(`accepted ip=${clientIP} proxy_protocol=absent`);
-          if(!rdpManager.isAnyWhiteList(clientIP)){
-            log(`refused ip=${clientIP} reason=not_whitelisted`);
-            clientSocket.end();
-            return;
-          }
         }
       }
 
@@ -188,6 +193,11 @@ const server = net.createServer((clientSocket) => {
       // 统一：Host 子域匹配与回退
       const { isHttp, subPrefix } = parseHostSubPrefix(appData);
       const chosen = selectTarget(subPrefix);
+      if (chosen.access !== 'public' && !rdpManager.isAnyWhiteList(clientIP)) {
+        log(`refused ip=${clientIP} target=${chosen.host}:${chosen.port} reason=not_whitelisted`);
+        clientSocket.end();
+        return;
+      }
       if (isHttp && chosen.matched) {
         log(`route protocol=http host=${subPrefix} target=${chosen.host}:${chosen.port} matched=true`);
       } else if (isHttp) {
@@ -197,7 +207,8 @@ const server = net.createServer((clientSocket) => {
       }
 
       // 建立转发
-      connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData, log);
+      const requestTransform = isHttp ? new ForwardedForTransform(clientIP) : null;
+      connectAndPipe(clientSocket, { host: chosen.host, port: chosen.port }, appData, log, requestTransform);
     } catch (err) {
       log(`processing error error=${err.message}`);
       console.error(`Error processing data: ${err.message}`);

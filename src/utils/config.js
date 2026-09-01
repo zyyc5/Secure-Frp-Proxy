@@ -2,6 +2,15 @@ const fs = require('fs').promises;
 const path = require('path');
 const { loadEnvFile, setEnvValue } = require('./env');
 
+const SELF_TARGET = {
+  id: 'self',
+  name: 'self',
+  host: '127.0.0.1',
+  port: 9108,
+  description: '管理控制台',
+  access: 'public'
+};
+
 class ConfigManager {
   constructor() {
     this.config = null;
@@ -107,6 +116,13 @@ class ConfigManager {
         throw new Error('Invalid proxy target');
       }
       target.port = Number(target.port);
+      target.access = target.access === 'public' ? 'public' : 'protected';
+    }
+    const selfIndex = c.PROXY_TARGETS.findIndex((target) => String(target.name).toLowerCase() === 'self' && target.id !== SELF_TARGET.id);
+    if (selfIndex !== -1) {
+      const previousId = c.PROXY_TARGETS[selfIndex].id;
+      c.PROXY_TARGETS[selfIndex] = { ...SELF_TARGET };
+      if (c.CURRENT_PROXY_TARGET === previousId) c.CURRENT_PROXY_TARGET = SELF_TARGET.id;
     }
   }
 

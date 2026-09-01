@@ -5,6 +5,7 @@ const path = require('path');
 const configManager = require('../utils/config');
 const rdpManager = require('./rdp-manager');
 const { parseProxyProtocolV2 } = require('../utils/proxy-protocol');
+const { injectForwardedFor, ForwardedForTransform } = require('../utils/http-forwarded-for');
 const { createDailyLogger } = require('../utils/logger');
 
 const LOG_DIRECTORY = path.join(__dirname, '..', '..', 'log');
@@ -77,11 +78,11 @@ const selectTarget = (subPrefix) => {
   const config = configManager.getAll();
   if (subPrefix && Array.isArray(config?.PROXY_TARGETS)) {
     const hit = config.PROXY_TARGETS.find((target) => String(target?.name || '').toLowerCase() === subPrefix.toLowerCase());
-    if (hit) return { host: hit.host, port: hit.port, matched: true };
+    if (hit) return { host: hit.host, port: hit.port, access: hit.access, matched: true };
   }
   const currentId = config?.CURRENT_PROXY_TARGET || 'default';
-  const fallback = (config?.PROXY_TARGETS || []).find((target) => target.id === currentId) || { host: '127.0.0.1', port: 80 };
-  return { host: fallback.host, port: fallback.port, matched: false };
+  const fallback = (config?.PROXY_TARGETS || []).find((target) => target.id === currentId) || { host: '127.0.0.1', port: 80, access: 'protected' };
+  return { host: fallback.host, port: fallback.port, access: fallback.access, matched: false };
 };
 
 const connectionLabel = (socket) => {
@@ -89,20 +90,31 @@ const connectionLabel = (socket) => {
   return `ip=${source.clientIP || 'unknown'} domain=${source.domain || 'unknown'}`;
 };
 
-const connectAndPipe = (clientSocket, target, firstPacket) => {
+const connectAndPipe = (clientSocket, target, firstPacket, requestTransform = null) => {
   const upstream = net.createConnection({ host: target.host, port: target.port }, () => {
+    if (requestTransform) {
+      requestTransform.pipe(upstream);
+      if (firstPacket.length > 0) requestTransform.write(firstPacket);
+      clientSocket.pipe(requestTransform);
+      return;
+    }
     if (firstPacket.length > 0) upstream.write(firstPacket);
+    clientSocket.pipe(upstream);
   });
   upstream.setTimeout(CONNECTION_TIMEOUT, () => {
     logger(`upstream timeout ${connectionLabel(clientSocket)} target=${target.host}:${target.port}`);
     upstream.destroy();
     clientSocket.destroy();
   });
-  clientSocket.pipe(upstream);
   upstream.pipe(clientSocket);
   upstream.on('error', (error) => {
     logger(`upstream error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
     clientSocket.end();
+  });
+  requestTransform?.on('error', (error) => {
+    logger(`request transform error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
+    upstream.destroy();
+    clientSocket.destroy();
   });
   clientSocket.on('error', () => upstream.end());
   upstream.on('end', () => clientSocket.end());
@@ -146,11 +158,6 @@ const handleConnection = (clientSocket) => {
       if (!sni.complete) return;
       domain = sni.serverName;
       clientSocket.off('data', readProxyProtocol);
-      if (!rdpManager.isAnyWhiteList(proxyHeader.clientIP)) {
-        logger(`refuse https connection ip=${proxyHeader.clientIP} domain=${sni.serverName} reason=not_whitelisted`);
-        clientSocket.destroy();
-        return;
-      }
       logger(`accept https connection ip=${proxyHeader.clientIP} domain=${sni.serverName}`);
       handOffToTls(clientSocket, tlsData, proxyHeader.clientIP, sni.serverName);
     } catch (error) {
@@ -174,8 +181,19 @@ const handleTlsConnection = (tlsSocket) => {
     const { isHttp, subPrefix, host } = parseHostSubPrefix(firstPacket);
     const chosen = selectTarget(subPrefix);
     tlsSocket.domain = host === 'unknown' ? tlsSocket.servername || tlsSocket._parent?.domain || 'unknown' : host;
+    const clientIP = tlsSocket._parent?.clientIP || tlsSocket.clientIP || 'unknown';
+    if (chosen.access !== 'public' && !rdpManager.isAnyWhiteList(clientIP)) {
+      logger(`refuse https request ${connectionLabel(tlsSocket)} target=${chosen.host}:${chosen.port} reason=not_whitelisted`);
+      tlsSocket.destroy();
+      return;
+    }
     logger(`https request ${connectionLabel(tlsSocket)} target=${chosen.host}:${chosen.port} matched=${isHttp && chosen.matched}`);
-    connectAndPipe(tlsSocket, chosen, firstPacket);
+    connectAndPipe(
+      tlsSocket,
+      chosen,
+      firstPacket,
+      isHttp ? new ForwardedForTransform(clientIP) : null
+    );
   };
   tlsSocket.on('data', onData);
 };
@@ -231,4 +249,4 @@ const stop = () => {
   }
 };
 
-module.exports = { start, stop, reloadCertificates };
+module.exports = { start, stop, reloadCertificates, injectForwardedFor, ForwardedForTransform };

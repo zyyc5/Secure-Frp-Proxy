@@ -5,7 +5,16 @@
       "name": "默认服务器",
       "host": "127.0.0.1",
       "port": 3389,
-      "description": "本地RDP服务"
+      "description": "本地RDP服务",
+      "access": "protected"
+    },
+    {
+      "id": "self",
+      "name": "self",
+      "host": "127.0.0.1",
+      "port": 9108,
+      "description": "管理控制台",
+      "access": "public"
     }
   ],
   "CURRENT_PROXY_TARGET": "default"

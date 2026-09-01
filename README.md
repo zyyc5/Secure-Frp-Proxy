@@ -107,6 +107,8 @@ HTTPS_TERMINATOR_HOST=127.0.0.1
 
 配置会在启动时校验端口、凭据和代理目标；Web 修改配置时使用原子写入，避免并发写坏 JSON。
 
+代理目标支持 `protected` 与 `public` 两种访问策略。`protected` 目标需要客户端 IP 位于白名单；`public` 目标跳过 IP 白名单，但其上游服务仍应自行启用认证。系统内置公开的 `self` 目标，固定映射到 `127.0.0.1:9108`，用于访问管理控制台。
+
 ## frpc 配置
 
 仓库内置 Linux 和 Windows amd64 客户端，当前版本为 `0.70.1`。
@@ -167,6 +169,7 @@ HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/
 | `GET` | `/api/page-data` | 获取状态总览 |
 | `GET` | `/api/proxy-targets` | 获取代理目标 |
 | `POST` | `/api/proxy-targets` | 添加目标 |
+| `PUT` | `/api/proxy-targets/:id` | 修改目标 |
 | `POST` | `/api/proxy-targets/reorder` | 保存目标排序 |
 | `POST` | `/api/proxy-targets/:id/set-current` | 设置当前目标 |
 | `DELETE` | `/api/proxy-targets/:id` | 删除目标 |

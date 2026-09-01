@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { page: null, targets: [], current: '', busy: new Set() };
+  const state = { page: null, targets: [], current: '', busy: new Set(), editingTargetId: null };
   const loading = $('loading');
   const app = $('app');
 
@@ -47,7 +47,8 @@
     const list = $('targetsList'); list.innerHTML = ''; $('emptyTargets').hidden = state.targets.length > 0;
     state.targets.forEach((target) => {
       const item = document.createElement('tr'); item.draggable = true; item.dataset.id = target.id; item.className = target.id === state.current ? 'current-row' : '';
-      item.innerHTML = `<td><button class="drag-handle" aria-label="拖动排序" title="拖动排序">&#8942;&#8942;</button></td><td><span class="table-name">${escapeHtml(target.name)}</span></td><td><span class="table-address">${escapeHtml(target.host)}:${target.port}</span></td><td><span class="table-description">${escapeHtml(target.description || '暂无描述')}</span></td><td>${target.id === state.current ? '<span class="eyebrow">当前</span>' : '<span class="muted">可用</span>'}</td><td><div class="table-actions">${target.id === state.current ? '<button class="btn btn-outline" disabled>当前</button>' : `<button class="btn btn-primary" data-action="select" data-id="${escapeHtml(target.id)}">设为当前</button>`}<button class="btn btn-outline" data-action="delete" data-id="${escapeHtml(target.id)}">删除</button></div></td>`;
+      const isSelf = target.id === 'self';
+      item.innerHTML = `<td><button class="drag-handle" aria-label="拖动排序" title="拖动排序">&#8942;&#8942;</button></td><td><span class="table-name">${escapeHtml(target.name)}</span></td><td><span class="table-address">${escapeHtml(target.host)}:${target.port}</span></td><td>${target.access === 'public' ? '<span class="eyebrow">公开</span>' : '<span class="muted">保护</span>'}</td><td><span class="table-description">${escapeHtml(target.description || '暂无描述')}</span></td><td>${target.id === state.current ? '<span class="eyebrow">当前</span>' : '<span class="muted">可用</span>'}</td><td><div class="target-row-actions">${target.id === state.current ? '' : `<button class="target-row-action is-primary" data-action="select" data-id="${escapeHtml(target.id)}">设为当前</button>`}<button class="target-row-action" data-action="edit" data-id="${escapeHtml(target.id)}">编辑</button>${isSelf ? '' : `<button class="target-row-action is-danger" data-action="delete" data-id="${escapeHtml(target.id)}">删除</button>`}</div></td>`;
       item.addEventListener('dragstart', () => { state.dragged = target.id; item.classList.add('dragging'); });
       item.addEventListener('dragend', () => { state.dragged = null; item.classList.remove('dragging'); });
       item.addEventListener('dragover', (event) => event.preventDefault());
@@ -76,9 +77,24 @@
   $('targetsList').addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action]'); if (!button) return;
     const id = encodeURIComponent(button.dataset.id);
+    if (button.dataset.action === 'edit') return openTargetDialog(state.targets.find((target) => target.id === button.dataset.id));
     try { if (button.dataset.action === 'delete' && !window.confirm('确定删除这个代理目标吗？')) return; await request(`/api/proxy-targets/${id}${button.dataset.action === 'select' ? '/set-current' : ''}`, { method: button.dataset.action === 'select' ? 'POST' : 'DELETE' }); toast(button.dataset.action === 'select' ? '当前目标已更新' : '目标已删除'); await load(); } catch (error) { toast(error.message, true); }
   });
-  $('addTargetBtn').addEventListener('click', () => $('targetDialog').showModal());
+  function openTargetDialog(target = null) {
+    const form = $('targetForm'); state.editingTargetId = target?.id || null;
+    form.reset();
+    if (target) {
+      form.elements.name.value = target.name;
+      form.elements.host.value = target.host;
+      form.elements.port.value = target.port;
+      form.elements.access.value = target.access || 'protected';
+      form.elements.description.value = target.description || '';
+    }
+    $('targetDialogTitle').textContent = target ? '编辑代理目标' : '添加代理目标';
+    $('targetSubmit').textContent = target ? '保存修改' : '添加目标';
+    $('targetDialog').showModal();
+  }
+  $('addTargetBtn').addEventListener('click', () => openTargetDialog());
   $('passwordBtn').addEventListener('click', () => { $('userName').value = state.page?.userName || ''; $('passwordDialog').showModal(); });
   document.querySelectorAll('[data-close-dialog]').forEach((button) => {
     button.addEventListener('click', () => $(button.dataset.closeDialog).close());
@@ -86,7 +102,7 @@
   $('targetForm').addEventListener('submit', async (event) => {
     event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement); const data = Object.fromEntries(form.entries()); data.port = Number(data.port);
     if (!data.name || !data.host || !Number.isInteger(data.port) || data.port < 1 || data.port > 65535) return toast('请填写有效的名称、主机地址和端口', true);
-    try { await request('/api/proxy-targets', { method: 'POST', body: JSON.stringify(data) }); formElement.reset(); $('targetDialog').close(); toast('目标已添加'); await load(); } catch (error) { toast(error.message, true); }
+    try { const editing = state.editingTargetId; await request(editing ? `/api/proxy-targets/${encodeURIComponent(editing)}` : '/api/proxy-targets', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(data) }); formElement.reset(); $('targetDialog').close(); toast(editing ? '目标已更新' : '目标已添加'); await load(); } catch (error) { toast(error.message, true); }
   });
   $('passwordForm').addEventListener('submit', async (event) => {
     event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget).entries());

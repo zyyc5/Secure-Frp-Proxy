@@ -7,6 +7,15 @@ const frpc = require('../services/frpc-manager');
 const { changePassword, getUserName } = require('../utils/auth');
 const configManager = require('../utils/config');
 
+const normalizeTargetInput = ({ name, host, port, description, access }) => {
+  const numericPort = Number(port);
+  const normalizedName = String(name || '').trim();
+  const normalizedHost = String(host || '').trim();
+  if (!normalizedName || !normalizedHost || !Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) return null;
+  if (access !== undefined && access !== 'public' && access !== 'protected') return null;
+  return { name: normalizedName, host: normalizedHost, port: numericPort, description: String(description || '').trim(), access: access || 'protected' };
+};
+
 const readPublicPorts = () => {
   const configDir = process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
   try {
@@ -49,10 +58,8 @@ router.get('/proxy-targets', (req, res) => {
 
 // 添加代理目标地址
 router.post('/proxy-targets', async (req, res) => {
-  const { name, host, port, description } = req.body;
-  
-  const numericPort = Number(port);
-  if (!name || !host || !Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) {
+  const targetInput = normalizeTargetInput(req.body);
+  if (!targetInput) {
     return res.status(400).json({ error: '名称、主机地址和端口为必填项' });
   }
   
@@ -64,10 +71,7 @@ router.post('/proxy-targets', async (req, res) => {
     
     const newTarget = {
       id: Date.now().toString(),
-      name,
-      host,
-      port: numericPort,
-      description: description || ''
+      ...targetInput
     };
     
     config.PROXY_TARGETS = config.PROXY_TARGETS || [];
@@ -80,6 +84,23 @@ router.post('/proxy-targets', async (req, res) => {
   } catch (error) {
     console.error('保存配置失败:', error);
     res.status(500).json({ error: '保存配置失败' });
+  }
+});
+
+router.put('/proxy-targets/:id', async (req, res) => {
+  const targetInput = normalizeTargetInput(req.body);
+  if (!targetInput) return res.status(400).json({ error: '目标配置无效' });
+  try {
+    const config = configManager.getAll();
+    const targetIndex = config?.PROXY_TARGETS?.findIndex((target) => target.id === req.params.id) ?? -1;
+    if (targetIndex < 0) return res.status(404).json({ error: '目标地址不存在' });
+    const updatedTarget = { id: req.params.id, ...targetInput };
+    config.PROXY_TARGETS[targetIndex] = updatedTarget;
+    await configManager.saveConfig();
+    res.json({ success: true, target: updatedTarget });
+  } catch (error) {
+    console.error('更新代理目标失败:', error);
+    res.status(500).json({ error: '更新代理目标失败' });
   }
 });
 
@@ -104,6 +125,7 @@ router.post('/proxy-targets/reorder', async (req, res) => {
 
 // 删除代理目标地址
 router.delete('/proxy-targets/:id', async (req, res) => {
+  if (req.params.id === 'self') return res.status(400).json({ error: '内置 self 目标不可删除' });
   const { id } = req.params;
   
   try {
