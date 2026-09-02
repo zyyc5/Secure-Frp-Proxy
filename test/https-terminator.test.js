@@ -1,7 +1,31 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const { injectForwardedFor, ForwardedForTransform } = require('../src/services/https-terminator');
+const configManager = require('../src/utils/config');
+const { injectForwardedFor, ForwardedForTransform, parseHostSubPrefix, selectTarget } = require('../src/services/https-terminator');
+
+test('routes HTTPS only to a target matching the Host subdomain', () => {
+  const previousConfig = configManager.config;
+  configManager.config = {
+    CURRENT_PROXY_TARGET: 'default',
+    PROXY_TARGETS: [
+      { id: 'default', name: 'default', host: '127.0.0.1', port: 3389, access: 'protected' },
+      { id: 'self', name: 'self', host: '127.0.0.1', port: 9108, access: 'public' }
+    ]
+  };
+
+  try {
+    const matched = parseHostSubPrefix(Buffer.from('GET / HTTP/1.1\r\nHost: self.example.test\r\n\r\n'));
+    const unknown = parseHostSubPrefix(Buffer.from('GET / HTTP/1.1\r\nHost: unknown.example.test\r\n\r\n'));
+    const missing = parseHostSubPrefix(Buffer.from('GET / HTTP/1.1\r\n\r\n'));
+
+    assert.deepEqual(selectTarget(matched.subPrefix), { host: '127.0.0.1', port: 9108, access: 'public', matched: true });
+    assert.equal(selectTarget(unknown.subPrefix), null);
+    assert.equal(selectTarget(missing.subPrefix), null);
+  } finally {
+    configManager.config = previousConfig;
+  }
+});
 
 test('adds the verified client IP and replaces a supplied X-Forwarded-For header', () => {
   const packet = Buffer.from(

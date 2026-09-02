@@ -145,7 +145,7 @@ HTTPS_TERMINATOR_PORT=9443
 HTTPS_TERMINATOR_HOST=127.0.0.1
 ```
 
-HTTPS Terminator 当前仅支持 HTTP/1.1。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 代理配置在 `frpc.toml` 中，且必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR_HOST` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
+HTTPS Terminator 当前仅支持 HTTP/1.1，并且只会将请求转发到与 HTTP `Host` 首个子域严格匹配的代理目标 `name`，不匹配、缺失 Host 或非 HTTP 请求均会被拒绝，不会回退到当前默认目标。证书路径固定为 `config/certs/privkey.key` 和 `config/certs/fullchain.cer`；Docker 已挂载整个 `config` 目录，因此无需配置额外卷或证书路径。证书目录已被 Git 忽略。HTTPS 代理配置在 `frpc.toml` 中，且必须启用 Proxy Protocol v2；终止器会在 TLS 握手前校验并移除该头，再用其中的真实客户端 IP 执行白名单校验。终止器默认绑定 `127.0.0.1`，如 frpc 不在同一主机，可通过 `HTTPS_TERMINATOR_HOST` 修改监听地址，并使用防火墙只允许该 frpc 来源访问。
 
 ### 控制面同步
 

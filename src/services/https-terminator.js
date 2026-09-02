@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const configManager = require('../utils/config');
 const rdpManager = require('./rdp-manager');
-const { parseProxyProtocolV2 } = require('../utils/proxy-protocol');
+const { normalizeIP, parseProxyProtocolV2 } = require('../utils/proxy-protocol');
 const { injectForwardedFor, ForwardedForTransform } = require('../utils/http-forwarded-for');
 const { createDailyLogger } = require('../utils/logger');
 
@@ -16,6 +16,12 @@ const CERTIFICATE_FILE = 'fullchain.cer';
 const PRIVATE_KEY_FILE = 'privkey.key';
 const getConfigDir = () => process.env.CONFIG_DIR || path.join(__dirname, '..', '..', 'config');
 const logger = createDailyLogger(LOG_DIRECTORY, 'https_terminator');
+let nextConnectionSequence = 0;
+
+const createConnectionId = () => {
+  nextConnectionSequence = (nextConnectionSequence + 1) % 1_000_000;
+  return `https-${Date.now().toString(36)}-${nextConnectionSequence}`;
+};
 
 const HTTP_METHODS_RE = /^(GET|POST|HEAD|PUT|DELETE|OPTIONS|PATCH)\s/i;
 const HTTP_VERSION_RE = /HTTP\/(1\.[01]|2)/i;
@@ -80,17 +86,20 @@ const selectTarget = (subPrefix) => {
     const hit = config.PROXY_TARGETS.find((target) => String(target?.name || '').toLowerCase() === subPrefix.toLowerCase());
     if (hit) return { host: hit.host, port: hit.port, access: hit.access, matched: true };
   }
-  const currentId = config?.CURRENT_PROXY_TARGET || 'default';
-  const fallback = (config?.PROXY_TARGETS || []).find((target) => target.id === currentId) || { host: '127.0.0.1', port: 80, access: 'protected' };
-  return { host: fallback.host, port: fallback.port, access: fallback.access, matched: false };
+  return null;
 };
 
+const connectionSource = (socket) => socket._parent || socket;
+
 const connectionLabel = (socket) => {
-  const source = socket._parent || socket;
+  const source = connectionSource(socket);
   return `ip=${source.clientIP || 'unknown'} domain=${source.domain || 'unknown'}`;
 };
 
+const connectionLogger = (socket) => connectionSource(socket).connectionLogger || logger;
+
 const connectAndPipe = (clientSocket, target, firstPacket, requestTransform = null) => {
+  const log = connectionLogger(clientSocket);
   const upstream = net.createConnection({ host: target.host, port: target.port }, () => {
     if (requestTransform) {
       requestTransform.pipe(upstream);
@@ -102,17 +111,17 @@ const connectAndPipe = (clientSocket, target, firstPacket, requestTransform = nu
     clientSocket.pipe(upstream);
   });
   upstream.setTimeout(CONNECTION_TIMEOUT, () => {
-    logger(`upstream timeout ${connectionLabel(clientSocket)} target=${target.host}:${target.port}`);
+    log(`upstream timeout ${connectionLabel(clientSocket)} target=${target.host}:${target.port}`);
     upstream.destroy();
     clientSocket.destroy();
   });
   upstream.pipe(clientSocket);
   upstream.on('error', (error) => {
-    logger(`upstream error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
+    log(`upstream error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
     clientSocket.end();
   });
   requestTransform?.on('error', (error) => {
-    logger(`request transform error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
+    log(`request transform error ${connectionLabel(clientSocket)} target=${target.host}:${target.port} error=${error.message}`);
     upstream.destroy();
     clientSocket.destroy();
   });
@@ -134,14 +143,19 @@ const handOffToTls = (clientSocket, initialData, clientIP, domain) => {
 };
 
 const handleConnection = (clientSocket) => {
+  const connectionId = createConnectionId();
+  const log = (message) => logger(`connection=${connectionId} ${message}`);
+  clientSocket.connectionLogger = log;
+  log(`opened peer=${normalizeIP(clientSocket.remoteAddress || '')}:${clientSocket.remotePort || 'unknown'}`);
+  clientSocket.once('close', (hadError) => log(`closed had_error=${hadError}`));
   let received = Buffer.alloc(0);
   let proxyHeader = null;
   let domain = 'unknown';
   clientSocket.setTimeout(CONNECTION_TIMEOUT, () => {
-    logger(`refuse https connection ip=${proxyHeader?.clientIP || clientSocket.remoteAddress || 'unknown'} domain=${domain} reason=connection_timeout`);
+    log(`refused ip=${proxyHeader?.clientIP || normalizeIP(clientSocket.remoteAddress || '') || 'unknown'} domain=${domain} reason=connection_timeout`);
     clientSocket.destroy();
   });
-  clientSocket.on('error', (error) => logger(`https socket error ip=${proxyHeader?.clientIP || clientSocket.remoteAddress || 'unknown'} domain=${domain} error=${error.message}`));
+  clientSocket.on('error', (error) => log(`socket error ip=${proxyHeader?.clientIP || normalizeIP(clientSocket.remoteAddress || '') || 'unknown'} domain=${domain} error=${error.message}`));
   clientSocket.on('data', function readProxyProtocol(data) {
     received = Buffer.concat([received, data]);
     try {
@@ -149,7 +163,7 @@ const handleConnection = (clientSocket) => {
       if (!proxyHeader || !proxyHeader.complete) proxyHeader = parseProxyProtocolV2(received);
       if (!proxyHeader.complete) return;
       if (!proxyHeader.present) {
-        logger(`refuse https connection ip=${clientSocket.remoteAddress || 'unknown'} domain=unknown reason=missing_proxy_protocol`);
+        log(`refused ip=${normalizeIP(clientSocket.remoteAddress || '') || 'unknown'} domain=unknown reason=missing_proxy_protocol`);
         clientSocket.destroy();
         return;
       }
@@ -157,22 +171,25 @@ const handleConnection = (clientSocket) => {
       const sni = parseTlsServerName(tlsData);
       if (!sni.complete) return;
       domain = sni.serverName;
+      clientSocket.clientIP = proxyHeader.clientIP;
+      clientSocket.domain = sni.serverName;
       clientSocket.off('data', readProxyProtocol);
-      logger(`accept https connection ip=${proxyHeader.clientIP} domain=${sni.serverName}`);
+      log(`accepted ip=${proxyHeader.clientIP} domain=${sni.serverName} proxy_protocol=v2`);
       handOffToTls(clientSocket, tlsData, proxyHeader.clientIP, sni.serverName);
     } catch (error) {
-      logger(`refuse invalid connection ip=${clientSocket.remoteAddress || 'unknown'} domain=unknown error=${error.message}`);
+      log(`refused ip=${normalizeIP(clientSocket.remoteAddress || '') || 'unknown'} domain=unknown reason=invalid_connection error=${error.message}`);
       clientSocket.destroy();
     }
   });
 };
 
 const handleTlsConnection = (tlsSocket) => {
+  const log = connectionLogger(tlsSocket);
   let firstPacket = Buffer.alloc(0);
   const onData = (data) => {
     firstPacket = Buffer.concat([firstPacket, data]);
     if (firstPacket.length > MAX_HTTP_HEADER_SIZE) {
-      logger(`refuse https request ${connectionLabel(tlsSocket)} reason=http_header_too_large`);
+      log(`refused ${connectionLabel(tlsSocket)} reason=http_header_too_large`);
       tlsSocket.destroy();
       return;
     }
@@ -182,12 +199,17 @@ const handleTlsConnection = (tlsSocket) => {
     const chosen = selectTarget(subPrefix);
     tlsSocket.domain = host === 'unknown' ? tlsSocket.servername || tlsSocket._parent?.domain || 'unknown' : host;
     const clientIP = tlsSocket._parent?.clientIP || tlsSocket.clientIP || 'unknown';
-    if (chosen.access !== 'public' && !rdpManager.isAnyWhiteList(clientIP)) {
-      logger(`refuse https request ${connectionLabel(tlsSocket)} target=${chosen.host}:${chosen.port} reason=not_whitelisted`);
+    if (!isHttp || !chosen) {
+      log(`refused ${connectionLabel(tlsSocket)} host=${host} reason=${isHttp ? 'target_not_matched' : 'invalid_http_request'}`);
       tlsSocket.destroy();
       return;
     }
-    logger(`https request ${connectionLabel(tlsSocket)} target=${chosen.host}:${chosen.port} matched=${isHttp && chosen.matched}`);
+    if (chosen.access !== 'public' && !rdpManager.isAnyWhiteList(clientIP)) {
+      log(`refused ${connectionLabel(tlsSocket)} target=${chosen.host}:${chosen.port} reason=not_whitelisted`);
+      tlsSocket.destroy();
+      return;
+    }
+    log(`route protocol=https host=${host} target=${chosen.host}:${chosen.port} matched=true`);
     connectAndPipe(
       tlsSocket,
       chosen,
@@ -210,7 +232,7 @@ const start = () => {
     const key = fs.readFileSync(path.join(certificateDir, PRIVATE_KEY_FILE));
     const cert = fs.readFileSync(path.join(certificateDir, CERTIFICATE_FILE));
     tlsServer = tls.createServer({ key, cert, minVersion: 'TLSv1.2', ALPNProtocols: ['http/1.1'] }, handleTlsConnection);
-    tlsServer.on('tlsClientError', (error, socket) => logger(`TLS client error ${connectionLabel(socket)} error=${error.message}`));
+    tlsServer.on('tlsClientError', (error, socket) => connectionLogger(socket)(`tls client error ${connectionLabel(socket)} error=${error.message}`));
     const host = httpsCfg.host || '127.0.0.1';
     const port = httpsCfg.port || 443;
     server = net.createServer(handleConnection);
@@ -249,4 +271,4 @@ const stop = () => {
   }
 };
 
-module.exports = { start, stop, reloadCertificates, injectForwardedFor, ForwardedForTransform };
+module.exports = { start, stop, reloadCertificates, injectForwardedFor, ForwardedForTransform, parseHostSubPrefix, selectTarget };
