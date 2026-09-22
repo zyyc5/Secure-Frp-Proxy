@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Secure RDP Manager</title>
+  <title>Secure Gateway</title>
   <link rel="stylesheet" href="css/modern-styles.css">
   <link rel="stylesheet" href="css/target-access.css">
 </head>
@@ -11,8 +11,8 @@
   <div id="loading" class="loading-screen"><span class="spinner"></span><span>正在加载控制台...</span></div>
   <main id="app" class="shell" hidden>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">SR</span><div><strong>安全远程桌面管理</strong><small>内网服务访问网关</small></div></div>
-      <div class="top-actions"><span id="lastUpdated" class="muted">尚未同步</span><button id="refreshBtn" class="btn btn-quiet" title="刷新状态">刷新</button><button id="passwordBtn" class="btn btn-outline">账户</button></div>
+      <div class="brand"><span class="brand-mark">SG</span><div><strong>安全访问网关</strong><small>内网服务穿透与访问控制</small></div></div>
+      <div class="top-actions"><span id="lastUpdated" class="muted">尚未同步</span><button id="refreshBtn" class="btn btn-quiet" title="刷新状态">刷新</button><button id="accessLinkBtn" class="btn btn-outline">生成访问链接</button><button id="passwordBtn" class="btn btn-outline">账户</button></div>
     </header>
 
     <section class="hero"><div><p class="eyebrow">运维控制台</p><h1>网关运行概览</h1><p class="hero-copy">集中管理访问权限、代理目标和 FRP 隧道状态。</p></div><div id="overallBadge" class="overall-badge"><span class="pulse"></span><span>正在检查状态</span></div></section>
@@ -26,13 +26,24 @@
 
     <section class="content-grid">
       <article class="surface targets-surface"><div class="surface-head"><div><p class="eyebrow">路由管理</p><h2>代理目标</h2></div><button id="addTargetBtn" class="btn btn-primary">添加目标</button></div><div id="currentTarget" class="current-target"><span class="muted">当前路由</span><strong>--</strong></div><div class="table-wrap"><table class="targets-table"><thead><tr><th class="drag-col"></th><th>名称</th><th>地址</th><th>访问策略</th><th>说明</th><th>状态</th><th class="actions-col">操作</th></tr></thead><tbody id="targetsList"></tbody></table></div><div id="emptyTargets" class="empty" hidden>暂未配置代理目标。</div></article>
-      <aside class="surface side-surface"><div class="surface-head"><div><p class="eyebrow">安全策略</p><h2>访问控制</h2></div></div><div class="security-row"><span class="security-dot"></span><div><strong>Basic Auth 认证</strong><p>管理接口已受到保护。</p></div></div><div class="security-row"><span class="security-dot"></span><div><strong>临时访问</strong><p id="accessDetail">--</p></div></div><div class="notice"><strong>保持网关私密</strong><p>仅通过可信网络或 TLS 终止器暴露 9108 和 13389 端口。</p></div></aside>
+      <aside class="surface side-surface"><div class="surface-head"><div><p class="eyebrow">安全策略</p><h2>访问控制</h2></div></div><div class="security-row"><span class="security-dot"></span><div><strong>Basic Auth 认证</strong><p>管理接口已受到保护。</p></div></div><div class="security-row"><span class="security-dot"></span><div><strong>临时访问</strong><p id="accessDetail">--</p></div></div><div class="notice"><strong>保持网关私密</strong><p>请勿将管理端口直接暴露到公网，建议通过 HTTPS 终止器或可信反向代理访问。</p></div></aside>
+    </section>
+
+    <section class="surface connections-surface">
+      <div class="surface-head"><div><p class="eyebrow">可观测性</p><h2>最近连接</h2></div>
+        <div class="conn-tabs"><button class="conn-tab active" data-type="tcp">TCP 代理</button><button class="conn-tab" data-type="https">HTTPS 终止</button><button class="conn-tab" data-type="audit">操作日志</button></div>
+      </div>
+      <div id="connectionSummary" class="connection-summary"></div>
+      <div class="table-wrap"><table class="targets-table connections-table"><thead><tr id="connectionsHead"><th>来源 IP</th><th>连接次数</th><th>被拒次数</th><th>最后活跃</th><th class="actions-col">操作</th></tr></thead><tbody id="connectionsList"></tbody></table></div>
+      <div id="emptyConnections" class="empty" hidden>暂无连接记录。</div>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status"></div>
   <dialog id="targetDialog" class="dialog"><form method="dialog" id="targetForm" novalidate><div class="dialog-head"><div><p class="eyebrow">路由管理</p><h2 id="targetDialogTitle">添加代理目标</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="targetDialog">X</button></div><label>名称<input name="name" maxlength="40" required placeholder="办公 NAS"></label><label>主机地址<input name="host" maxlength="255" required placeholder="192.168.1.20"></label><label>端口<input name="port" type="number" min="1" max="65535" value="3389" required></label><fieldset class="access-control"><legend>访问策略</legend><div class="access-segmented"><label><input type="radio" name="access" value="protected" checked><span><strong>保护</strong><small>仅白名单 IP</small></span></label><label><input type="radio" name="access" value="public"><span><strong>公开</strong><small>跳过 IP 白名单</small></span></label></div></fieldset><label>描述<textarea name="description" maxlength="160" rows="3" placeholder="可选说明"></textarea></label><div class="dialog-actions"><button type="button" class="btn btn-outline" data-close-dialog="targetDialog">取消</button><button id="targetSubmit" type="submit" value="default" class="btn btn-primary">添加目标</button></div></form></dialog>
   <dialog id="passwordDialog" class="dialog"><form method="dialog" id="passwordForm" novalidate><div class="dialog-head"><div><p class="eyebrow">账户管理</p><h2>更新登录凭据</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="passwordDialog">X</button></div><label>用户名<input name="userName" id="userName" required></label><label>新密码<input name="newPassword" type="password" minlength="12" required></label><label>确认密码<input name="confirmPassword" type="password" minlength="12" required></label><p class="form-hint">密码至少需要 12 位。</p><div class="dialog-actions"><button type="button" class="btn btn-outline" data-close-dialog="passwordDialog">取消</button><button type="submit" value="default" class="btn btn-primary">保存凭据</button></div></form></dialog>
+  <dialog id="accessLinkDialog" class="dialog access-link-dialog"><div class="dialog-head"><div><p class="eyebrow">临时访问</p><h2>生成访问链接</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="accessLinkDialog">&#10005;</button></div><div class="access-link-body"><p class="access-link-desc">生成一次性临时链接，分享给需要访问的人。对方打开后其公网 IP 将自动加入白名单，15 分钟后自动过期。</p><div id="accessLinkResult" class="access-link-result" hidden><div class="access-link-field"><div class="access-link-label">访问链接</div><div class="access-link-row"><input id="accessLinkUrl" readonly><button id="accessLinkCopy" type="button" class="btn btn-primary access-link-copy-btn">复制</button></div><div class="access-link-meta">单次有效 &middot; 15 分钟后过期</div></div></div><div class="dialog-actions"><button type="button" class="btn btn-outline" data-close-dialog="accessLinkDialog">关闭</button><button id="accessLinkGenerate" type="button" class="btn btn-primary">生成链接</button></div></div></dialog>
+  <dialog id="ipDetailDialog" class="dialog ip-detail-dialog"><div class="dialog-head"><div><p class="eyebrow">连接详情</p><h2 id="ipDetailTitle">IP 详情</h2></div><button type="button" class="icon-btn" aria-label="关闭" data-close-dialog="ipDetailDialog">&#10005;</button></div><div id="ipDetailMeta" class="ip-detail-meta"></div><div class="table-wrap"><table class="targets-table connections-table"><thead><tr id="ipDetailHead"></tr></thead><tbody id="ipDetailList"></tbody></table></div></dialog>
   <script src="js/modern-app.js"></script>
 </body>
 </html>

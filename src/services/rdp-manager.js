@@ -25,11 +25,15 @@ class RDPManager {
    * @param {*} ip
    */
   addTempWhiteList(ip) {
+    this.addTempWhiteListWithTtl(ip, 120 * 1000);
+  }
+
+  addTempWhiteListWithTtl(ip, ttlMs) {
     const dip = this.tempWhiteList.find((item) => item.ip === ip);
     if (dip) {
-      dip.time = Date.now() + 120 * 1000;
+      dip.time = Date.now() + ttlMs;
     } else {
-      this.tempWhiteList.push({ ip, time: Date.now() + 120 * 1000 });
+      this.tempWhiteList.push({ ip, time: Date.now() + ttlMs });
     }
   }
 

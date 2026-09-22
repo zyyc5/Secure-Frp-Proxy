@@ -5,11 +5,21 @@ const tcpProxy = require('./services/tcp-proxy');
 const httpsTerminator = require('./services/https-terminator');
 const frpc = require('./services/frpc-manager');
 const rdpManager = require('./services/rdp-manager');
+const accessLink = require('./services/access-link');
 const { basicAuth } = require('./utils/auth');
+const { audit } = require('./utils/audit-log');
 const fs = require('fs').promises;
 const { exec } = require('child_process');
 const util = require('util');
 const { startCertificateUpdateScheduler, syncControlPlane } = require('../scripts/sync-control-plane');
+
+const getAccessClientIp = (req) => {
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip = req.app.get('trust proxy') && forwarded
+    ? forwarded.split(',')[0].trim()
+    : req.socket.remoteAddress;
+  return (ip || '').replace('::ffff:', '');
+};
 
 // 路由
 const indexRouter = require('./routes/index');
@@ -88,6 +98,19 @@ class App {
   }
 
   setupRoutes() {
+    // 临时访问链接：消费 token 并将访问者 IP 加入临时白名单
+    this.app.get('/access/:token', (req, res) => {
+      const entry = accessLink.consumeToken(req.params.token);
+      const ip = getAccessClientIp(req);
+      if (!entry) {
+        audit(req, 'access_link_redeem', { result: 'expired_or_used' });
+        return res.status(410).send('<!doctype html><html lang="zh-CN"><body style="font-family:system-ui;display:grid;place-content:center;min-height:100vh;text-align:center"><h2>链接已失效</h2><p>此临时访问链接已被使用或已过期。</p></body></html>');
+      }
+      rdpManager.addTempWhiteListWithTtl(ip, 15 * 60 * 1000);
+      audit(req, 'access_link_redeem', { result: 'success', target_ip: ip });
+      res.send(`<!doctype html><html lang="zh-CN"><body style="font-family:system-ui;display:grid;place-content:center;min-height:100vh;text-align:center"><h2>访问已开通</h2><p>IP <strong>${ip}</strong> 已加入临时白名单。</p><p>有效期 15 分钟，请尽快通过 RDP 客户端连接。</p></body></html>`);
+    });
+
     // API路由
     this.app.use('/api', apiRouter);
     // 主页路由
