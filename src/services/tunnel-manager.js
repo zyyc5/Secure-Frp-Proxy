@@ -104,6 +104,17 @@ const setStatus = async (tunnelId, status) => {
   }
 };
 
+const scheduleFrpcRestart = (tunnelId) => {
+  void setStatus(tunnelId, 'restarting').catch(() => {});
+  void frpc.reStart().then(async () => {
+    const tunnel = get(tunnelId);
+    if (tunnel) await setStatus(tunnelId, proxyInstances.isRunning(tunnelId) ? 'running' : 'proxy_error');
+  }).catch(async (error) => {
+    console.error(`FRP restart failed for tunnel ${tunnelId}: ${error.message}`);
+    if (get(tunnelId)) await setStatus(tunnelId, 'frpc_error');
+  });
+};
+
 let operationQueue = Promise.resolve();
 
 const withTunnelLock = (operation) => {
@@ -166,16 +177,25 @@ const remove = (tunnelId) => withTunnelLock(() => removeLocked(tunnelId));
 
 const removeLocked = async (tunnelId) => {
   const tunnel = get(tunnelId);
-  if (!tunnel) throw Object.assign(new Error('隧道不存在'), { code: 'tunnel_not_found' });
-  if (tunnel.role !== 'dedicated') throw Object.assign(new Error('内置隧道不可删除'), { code: 'builtin_tunnel_not_removable' });
-  if (tunnel.targetId) throw Object.assign(new Error('请先解绑目标'), { code: 'tunnel_target_bound' });
+  if (tunnel && tunnel.role !== 'dedicated') throw Object.assign(new Error('内置隧道不可删除'), { code: 'builtin_tunnel_not_removable' });
+  if (tunnel?.targetId) throw Object.assign(new Error('请先解绑目标'), { code: 'tunnel_target_bound' });
+
+  let serverRecordExists = Boolean(tunnel);
+  try {
+    await controlPlane.deleteDedicatedTunnel(tunnelId);
+  } catch (error) {
+    if (error?.status !== 404) throw error;
+    if (!tunnel) throw Object.assign(new Error('隧道不存在'), { code: 'tunnel_not_found' });
+    serverRecordExists = false;
+  }
+
   await proxyInstances.stop(tunnelId);
-  await controlPlane.deleteDedicatedTunnel(tunnelId);
   await frpcConfig.removeTunnel(tunnelId);
   const config = configManager.getAll();
   config.TUNNELS = (config.TUNNELS || []).filter((entry) => entry.id !== tunnelId);
   await configManager.saveConfig();
   scheduleFrpcRestart(tunnelId);
+  return { removed: true, serverRecordExists };
 };
 
 const startDedicated = async () => {
