@@ -2,6 +2,8 @@
   const $ = (id) => document.getElementById(id);
   const state = { page: null, targets: [], tunnels: [], current: '', connType: 'tcp', busy: new Set(), editingTargetId: null };
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   function toast(message, error = false) {
     const el = $('toast'); el.textContent = message; el.className = `toast show${error ? ' error' : ''}`;
     clearTimeout(toast.t); toast.t = setTimeout(() => { el.className = 'toast'; }, 2800);
@@ -240,10 +242,24 @@
 
   $('addTunnelBtn').addEventListener('click', () => { $('tunnelForm').reset(); $('tunnelDialog').showModal(); });
 
+  async function refreshAfterTunnelChange() {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try { await load(); return; } catch (_) {}
+      if (attempt < 3) await sleep(attempt === 0 ? 2500 : 4000);
+    }
+  }
+
   $('tunnelsList').addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-tunnel-action]'); if (!btn) return;
     if (btn.dataset.tunnelAction !== 'delete' || !confirm('确定删除这条专用隧道吗？')) return;
-    try { await req(`/api/tunnels/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' }); toast('隧道已删除'); await load(); } catch (e2) { toast(e2.message, true); }
+    const tunnelId = btn.dataset.id;
+    try {
+      await req(`/api/tunnels/${encodeURIComponent(tunnelId)}`, { method: 'DELETE' });
+      state.tunnels = state.tunnels.filter((tunnel) => tunnel.id !== tunnelId);
+      renderTunnels();
+      toast('隧道已删除');
+      await refreshAfterTunnelChange();
+    } catch (e2) { toast(e2.message, true); }
   });
 
   $('tunnelForm').addEventListener('submit', async (e) => {
@@ -251,8 +267,10 @@
     const d = Object.fromEntries(new FormData(e.currentTarget).entries());
     if (d.localPort) d.localPort = Number(d.localPort); else delete d.localPort;
     try {
-      await req('/api/tunnels', { method: 'POST', body: JSON.stringify(d) });
-      e.currentTarget.reset(); $('tunnelDialog').close(); toast('隧道已创建，FRP 正在重启'); await load();
+      const result = await req('/api/tunnels', { method: 'POST', body: JSON.stringify(d) });
+      if (result?.tunnel) { state.tunnels.push(result.tunnel); renderTunnels(); }
+      e.currentTarget.reset(); $('tunnelDialog').close(); toast('隧道已创建，FRP 正在重启');
+      await refreshAfterTunnelChange();
     } catch (e2) { toast(e2.message, true); }
   });
 
