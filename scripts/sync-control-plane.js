@@ -101,6 +101,15 @@ const syncControlPlane = async ({ configDir, fetchFn, setEnvValueFn = setEnvValu
     process.env.CONTROL_PLANE_CLIENT_ID = clientId;
   }
   await writeFileFn(frpcPath, initialization.frpcConfig);
+  if (Array.isArray(initialization.tunnels)) {
+    const tunnelsPath = path.join(environment.configDir, 'control-plane-tunnels.json');
+    await writeFileFn(tunnelsPath, JSON.stringify({
+      clientId,
+      version: initialization.version || null,
+      tunnels: initialization.tunnels,
+      syncedAt: new Date().toISOString()
+    }, null, 2) + '\n');
+  }
   let certificate;
   try {
     certificate = await syncCertificate({ ...environment, baseUrl, apiKey, fetchFn, setEnvValueFn, writeFileFn });
@@ -109,7 +118,7 @@ const syncControlPlane = async ({ configDir, fetchFn, setEnvValueFn = setEnvValu
     console.warn(`Certificate sync skipped: ${error.message}`);
   }
   console.log(`FRPC configuration for ${clientId} saved to ${frpcPath}`);
-  return { clientId, frpcPath, certificate };
+  return { clientId, frpcPath, tunnels: initialization.tunnels || [], certificate };
 };
 
 const checkCertificateUpdate = async ({ configDir, fetchFn, setEnvValueFn, writeFileFn } = {}) => {

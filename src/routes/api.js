@@ -10,14 +10,37 @@ const { getRecentConnections, getIpSummary, getIpDetail } = require('../services
 const accessLink = require('../services/access-link');
 const { audit } = require('../utils/audit-log');
 const { getRecentAuditLog } = require('../utils/audit-log');
+const tunnelManager = require('../services/tunnel-manager');
+const controlPlane = require('../services/control-plane-client');
 
-const normalizeTargetInput = ({ name, host, port, description, access }) => {
+const normalizeTargetInput = ({ name, host, port, description, access, tunnelId }) => {
   const numericPort = Number(port);
   const normalizedName = String(name || '').trim();
   const normalizedHost = String(host || '').trim();
   if (!normalizedName || !normalizedHost || !Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) return null;
   if (access !== undefined && access !== 'public' && access !== 'protected') return null;
-  return { name: normalizedName, host: normalizedHost, port: numericPort, description: String(description || '').trim(), access: access || 'protected' };
+  return { name: normalizedName, host: normalizedHost, port: numericPort, description: String(description || '').trim(), access: access || 'protected', tunnelId: tunnelId || 'common' };
+};
+
+const findTunnel = (config, tunnelId) => (config?.TUNNELS || []).find((tunnel) => tunnel.id === tunnelId);
+
+const validateTunnelBinding = (config, tunnelId, targetId, previousTargetId = null) => {
+  if (!tunnelId || tunnelId === 'common' || tunnelId === 'common-tcp' || tunnelId === 'common-https') return tunnelId;
+  const tunnel = findTunnel(config, tunnelId);
+  if (!tunnel || tunnel.role !== 'dedicated') throw Object.assign(new Error('指定隧道不存在'), { code: 'tunnel_not_found', status: 400 });
+  if (tunnel.targetId && tunnel.targetId !== targetId && tunnel.targetId !== previousTargetId) throw Object.assign(new Error('隧道已被其他目标绑定'), { code: 'tunnel_target_bound', status: 409 });
+  return tunnelId;
+};
+
+const bindTunnel = (config, target) => {
+  const generic = ['common', 'common-tcp', 'common-https'];
+  (config.TUNNELS || []).forEach((tunnel) => {
+    if (tunnel.role === 'dedicated' && tunnel.targetId === target.id) tunnel.targetId = null;
+  });
+  if (!generic.includes(target.tunnelId)) {
+    const tunnel = findTunnel(config, target.tunnelId);
+    if (tunnel) tunnel.targetId = target.id;
+  }
 };
 
 const readPublicPorts = () => {
@@ -58,11 +81,47 @@ router.get('/proxy-targets', (req, res) => {
   if (!config) {
     return sendError(res, 500, '读取配置失败');
   }
-  
+
   res.json({
     targets: config.PROXY_TARGETS || [],
     currentTarget: config.CURRENT_PROXY_TARGET || 'default'
   });
+});
+
+// 隧道管理
+router.get('/tunnels', (req, res) => {
+  const config = configManager.getAll();
+  res.json({
+    tunnels: tunnelManager.list(),
+    nextLocalPort: config.TUNNEL_LOCAL_PORT_CURSOR || (config.TCP_PROXY_PORT || 13389) + 1,
+    controlPlaneConfigured: controlPlane.isConfigured()
+  });
+});
+
+router.post('/tunnels', async (req, res) => {
+  try {
+    const tunnel = await tunnelManager.create(req.body || {});
+    audit(req, 'create_tunnel', { id: tunnel.id, protocol: tunnel.protocol, remote_port: tunnel.remotePort, local_port: tunnel.localPort });
+    res.json({ success: true, tunnel });
+  } catch (error) {
+    console.error('创建隧道失败:', error);
+    const code = error.code || 'create_tunnel_failed';
+    const status = { control_plane_not_configured: 503, no_local_ports_available: 509, no_remote_ports_available: 503, local_port_in_use: 409 }[code] || 500;
+    sendError(res, status, error.message || '创建隧道失败', code);
+  }
+});
+
+router.delete('/tunnels/:id', async (req, res) => {
+  try {
+    await tunnelManager.remove(req.params.id);
+    audit(req, 'delete_tunnel', { id: req.params.id });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('删除隧道失败:', error);
+    const code = error.code || 'delete_tunnel_failed';
+    const status = { tunnel_not_found: 404, builtin_tunnel_not_removable: 400, tunnel_target_bound: 409, control_plane_not_configured: 503 }[code] || 500;
+    sendError(res, status, error.message || '删除隧道失败', code);
+  }
 });
 
 // 添加代理目标地址
@@ -71,24 +130,26 @@ router.post('/proxy-targets', async (req, res) => {
   if (!targetInput) {
     return sendError(res, 400, '名称、主机地址和端口为必填项');
   }
-  
+
   try {
     const config = configManager.getAll();
     if (!config) {
       return sendError(res, 500, '读取配置失败');
     }
-    
+
+    const newId = Date.now().toString();
+    targetInput.tunnelId = validateTunnelBinding(config, targetInput.tunnelId, newId);
     const newTarget = {
-      id: Date.now().toString(),
+      id: newId,
       ...targetInput
     };
-    
     config.PROXY_TARGETS = config.PROXY_TARGETS || [];
     config.PROXY_TARGETS.push(newTarget);
-    
+    bindTunnel(config, newTarget);
     configManager.set('PROXY_TARGETS', config.PROXY_TARGETS);
+    configManager.set('TUNNELS', config.TUNNELS);
     await configManager.saveConfig();
-    
+
     audit(req, 'add_target', { name: newTarget.name, host: newTarget.host, port: newTarget.port, access: newTarget.access });
     res.json({ success: true, target: newTarget });
   } catch (error) {
@@ -104,8 +165,12 @@ router.put('/proxy-targets/:id', async (req, res) => {
     const config = configManager.getAll();
     const targetIndex = config?.PROXY_TARGETS?.findIndex((target) => target.id === req.params.id) ?? -1;
     if (targetIndex < 0) return sendError(res, 404, '目标地址不存在');
-    const updatedTarget = { id: req.params.id, ...targetInput };
+    targetInput.tunnelId = validateTunnelBinding(config, targetInput.tunnelId, req.params.id, (config.PROXY_TARGETS[targetIndex] || {}).tunnelId);
+    const previousTarget = config.PROXY_TARGETS[targetIndex];
+    const updatedTarget = { ...previousTarget, id: req.params.id, ...targetInput };
     config.PROXY_TARGETS[targetIndex] = updatedTarget;
+    bindTunnel(config, updatedTarget);
+    configManager.set('TUNNELS', config.TUNNELS);
     await configManager.saveConfig();
     audit(req, 'update_target', { id: updatedTarget.id, name: updatedTarget.name, host: updatedTarget.host, port: updatedTarget.port });
     res.json({ success: true, target: updatedTarget });
@@ -139,24 +204,28 @@ router.post('/proxy-targets/reorder', async (req, res) => {
 router.delete('/proxy-targets/:id', async (req, res) => {
   if (req.params.id === 'self') return sendError(res, 400, '内置 self 目标不可删除');
   const { id } = req.params;
-  
+
   try {
     const config = configManager.getAll();
     if (!config) {
       return sendError(res, 500, '读取配置失败');
     }
-    
+
+    (config.TUNNELS || []).forEach((tunnel) => {
+      if (tunnel.targetId === id) tunnel.targetId = null;
+    });
+
     config.PROXY_TARGETS = config.PROXY_TARGETS.filter(target => target.id !== id);
-    
+
     // 如果删除的是当前目标，重置为默认目标
     if (config.CURRENT_PROXY_TARGET === id) {
       config.CURRENT_PROXY_TARGET = config.PROXY_TARGETS.length > 0 ? config.PROXY_TARGETS[0].id : 'default';
     }
-    
+
     configManager.set('PROXY_TARGETS', config.PROXY_TARGETS);
     configManager.set('CURRENT_PROXY_TARGET', config.CURRENT_PROXY_TARGET);
     await configManager.saveConfig();
-    
+
     audit(req, 'delete_target', { id, wasCurrent: config.CURRENT_PROXY_TARGET !== id });
     res.json({ success: true });
   } catch (error) {
@@ -168,21 +237,25 @@ router.delete('/proxy-targets/:id', async (req, res) => {
 // 设置当前代理目标
 router.post('/proxy-targets/:id/set-current', async (req, res) => {
   const { id } = req.params;
-  
+
   try {
     const config = configManager.getAll();
     if (!config) {
       return sendError(res, 500, '读取配置失败');
     }
-    
+
     const targetExists = config.PROXY_TARGETS.some(target => target.id === id);
+    const currentTarget = config.PROXY_TARGETS.find(target => target.id === id);
+    if (currentTarget?.tunnelId && !['common', 'common-tcp', 'common-https'].includes(currentTarget.tunnelId)) {
+      return sendError(res, 400, '专用隧道目标不能设为通用回退目标');
+    }
     if (!targetExists) {
       return sendError(res, 400, '目标地址不存在');
     }
-    
+
     configManager.set('CURRENT_PROXY_TARGET', id);
     await configManager.saveConfig();
-    
+
     audit(req, 'switch_target', { id });
     res.json({ success: true });
   } catch (error) {
@@ -301,8 +374,8 @@ router.get('/page-data', async (req, res) => {
     const ip = getIp(req);
     rdpManager.addTempWhiteList(ip);
     const isInWhiteList = rdpManager.isWhiteList(ip);
-    
-    // 如果不在白名单中，则提示临时白名单,并出一个连接的截止时间(两分钟后) 
+
+    // 如果不在白名单中，则提示临时白名单,并出一个连接的截止时间(两分钟后)
     const whiteListStatus = isInWhiteList
       ? '已加入白名单'
       : `连接有效期至: ${new Date(Date.now() + 120000).toLocaleString()}`;
@@ -371,5 +444,4 @@ router.get('/audit-log', (req, res) => {
   res.json({ entries: getRecentAuditLog(limit) });
 });
 
-module.exports = router; 
-
+module.exports = router;

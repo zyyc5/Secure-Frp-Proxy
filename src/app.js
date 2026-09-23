@@ -12,6 +12,7 @@ const fs = require('fs').promises;
 const { exec } = require('child_process');
 const util = require('util');
 const { startCertificateUpdateScheduler, syncControlPlane } = require('../scripts/sync-control-plane');
+const tunnelManager = require('./services/tunnel-manager');
 
 const getAccessClientIp = (req) => {
   const forwarded = req.headers['x-forwarded-for'];
@@ -35,22 +36,22 @@ class App {
   async setupPermissions() {
     try {
       console.log('Setting up application permissions...');
-      
+
       // 确保配置文件目录存在
       const projectDir = path.join(__dirname, '..');
       const configDir = process.env.CONFIG_DIR || path.join(projectDir, 'config');
       const logDir = path.join(projectDir, 'log');
       const frpcDir = path.join(projectDir, 'frpc');
-      
+
       // 创建必要的目录
       await fs.mkdir(configDir, { recursive: true });
       await fs.mkdir(logDir, { recursive: true });
       await fs.mkdir(frpcDir, { recursive: true });
-      
+
       // 确保用于保存动态代理目标的production.json存在
       const productionConfig = path.join(configDir, 'production.json');
       const defaultConfig = path.join(configDir, 'default.json');
-      
+
       try {
         await fs.access(productionConfig);
       } catch (err) {
@@ -58,27 +59,27 @@ class App {
         const defaultContent = await fs.readFile(defaultConfig, 'utf8');
         await fs.writeFile(productionConfig, defaultContent, 'utf8');
       }
-      
+
       // 设置文件权限（如果以root用户运行）
       if (process.getuid && process.getuid() === 0) {
         console.log('Running as root, setting file permissions...');
-        
+
         const execAsync = util.promisify(exec);
-        
+
         try {
           // 设置文件所有权
           await execAsync(`chown -R 1001:1001 "${configDir}" "${logDir}" "${frpcDir}"`);
-          
+
           // 设置文件权限
           await execAsync(`chmod -R 664 "${configDir}"/*.json "${configDir}"/.env`);
           await execAsync(`chmod 775 "${configDir}" "${logDir}" "${frpcDir}"`);
-          
+
           console.log('File permissions set successfully');
         } catch (permErr) {
           console.warn('Warning: Could not set file permissions:', permErr.message);
         }
       }
-      
+
       console.log('Permission setup completed');
     } catch (err) {
       console.error('Error setting up permissions:', err);
@@ -130,6 +131,7 @@ class App {
     }
     // 启动frpc服务
     if (await frpc.isInstalled()) {
+      await tunnelManager.startDedicated();
       frpc.start();
       console.log('frpc 已启动，正在运行...');
     } else {
@@ -144,6 +146,7 @@ class App {
     tcpProxy.stop();
     httpsTerminator.stop();
     console.log('TCP代理服务已停止');
+    await tunnelManager.stopDedicated();
     // 停止frpc服务
     await frpc.stop();
     console.log('frpc 已停止');
@@ -152,19 +155,19 @@ class App {
   async start() {
     // 1. 设置权限
     await this.setupPermissions();
-    
+
     // 2. 启动前强制加载配置
     const env = process.env.NODE_ENV || 'default';
     await configManager.loadConfig(env);
-    await this.syncControlPlane();
-    
+    await tunnelManager.syncFromControlPlane(await this.syncControlPlane());
+
     // 3. 初始化中间件和路由
     this.setupMiddleware();
     this.setupRoutes();
-    
+
     // 4. 启动服务
     await this.startServices();
-    
+
     // 5. 启动Web服务
     const config = configManager.getAll();
     const port = config.PORT || 9108;
@@ -172,7 +175,7 @@ class App {
       console.log(`服务器已启动，监听端口: ${port}`);
       console.log(`访问地址: http://localhost:${port}`);
     });
-    
+
     // 优雅关闭
     process.on('SIGINT', async () => {
       console.log('正在关闭服务器...');
@@ -203,7 +206,7 @@ class App {
   async syncControlPlane() {
     if (!process.env.CONTROL_PLANE_URL || !process.env.CONTROL_PLANE_API_KEY) return;
     try {
-      await syncControlPlane();
+      return await syncControlPlane();
     } catch (error) {
       console.error(`Control-plane startup sync failed: ${error.message}`);
     }
@@ -226,4 +229,4 @@ class App {
   }
 })();
 
-module.exports = App; 
+module.exports = App;

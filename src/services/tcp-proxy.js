@@ -16,7 +16,7 @@ const getCurrentProxyTarget = () => {
     const config = configManager.getAll();
     const currentTargetId = config.CURRENT_PROXY_TARGET || 'default';
     const target = config.PROXY_TARGETS.find(t => t.id === currentTargetId);
-    
+
     if (target) {
       return {
         host: target.host,
@@ -24,7 +24,7 @@ const getCurrentProxyTarget = () => {
         access: target.access
       };
     }
-    
+
     // 如果没有找到目标，使用默认配置
     return {
       host: '127.0.0.1',
@@ -93,12 +93,15 @@ const parseHostSubPrefix = (buf)=>{
 // 选择目标：根据子域匹配 name，未命中回退当前目标
 const selectTarget = (subPrefix)=>{
   const config = configManager.getAll();
-  if (subPrefix && Array.isArray(config?.PROXY_TARGETS)) {
-    const hit = config.PROXY_TARGETS.find(t => String(t?.name || '').toLowerCase() === subPrefix.toLowerCase());
+  const genericTargets = (config?.PROXY_TARGETS || []).filter((target) => ['common', 'common-tcp'].includes(target.tunnelId || 'common'));
+  if (subPrefix && genericTargets.length) {
+    const hit = genericTargets.find((target) => String(target?.name || '').toLowerCase() === subPrefix.toLowerCase());
     if (hit) return { host: hit.host, port: hit.port, access: hit.access, matched: true };
   }
-  const fb = getCurrentProxyTarget();
-  return { host: fb.host, port: fb.port, access: fb.access, matched: false };
+  const currentId = config.CURRENT_PROXY_TARGET;
+  const fallback = genericTargets.find((target) => target.id === currentId) || genericTargets[0];
+  if (fallback) return { host: fallback.host, port: fallback.port, access: fallback.access, matched: false };
+  return { host: '127.0.0.1', port: 3389, access: 'protected', matched: false };
 }
 
 // 建立转发并写入首包
@@ -229,7 +232,7 @@ server.on('error', (err) => {
 const start = () => {
   const config = configManager.getAll();
   const LISTEN_PORT = config.TCP_PROXY_PORT;
-  
+
   server.listen(LISTEN_PORT, () => {
     console.log(`RDP Proxy listening on port ${LISTEN_PORT}`);
   });
@@ -244,4 +247,4 @@ const stop = () => {
 module.exports = {
   start,
   stop
-} 
+}

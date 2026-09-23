@@ -1,6 +1,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
-  const state = { page: null, targets: [], current: '', connType: 'tcp', busy: new Set(), editingTargetId: null };
+  const state = { page: null, targets: [], tunnels: [], current: '', connType: 'tcp', busy: new Set(), editingTargetId: null };
 
   function toast(message, error = false) {
     const el = $('toast'); el.textContent = message; el.className = `toast show${error ? ' error' : ''}`;
@@ -38,6 +38,23 @@
     $('sidebarStatusText').textContent = proxyOn ? '隧道已连接' : '隧道已断开';
   }
 
+  function renderTunnels() {
+    const list = $('tunnelsList'); if (!list) return;
+    list.innerHTML = '';
+    $('emptyTunnels').hidden = state.tunnels.length > 0;
+    state.tunnels.forEach((tunnel) => {
+      const target = state.targets.find((item) => item.id === tunnel.targetId);
+      const tr = document.createElement('tr');
+      const type = tunnel.protocol === 'https' ? 'HTTPS' : 'TCP';
+      const role = tunnel.builtin ? '<span class="tag tag-blue">内置</span>' : '<span class="tag tag-amber">专用</span>';
+      const status = tunnel.builtin ? '<span class="tag tag-green">运行中</span>' : (tunnel.running ? '<span class="tag tag-green">运行中</span>' : `<span class="tag tag-red">${esc(tunnel.status || '停止')}</span>`);
+      const bound = target ? `${esc(target.name)}` : (tunnel.builtin ? '按路由规则' : '未绑定');
+      const actions = tunnel.builtin ? '' : `<button class="row-btn is-danger" data-tunnel-action="delete" data-id="${esc(tunnel.id)}">删除</button>`;
+      tr.innerHTML = `<td><span class="table-name">${esc(tunnel.name)}</span></td><td>${type} ${role}</td><td><span class="table-addr">127.0.0.1:${tunnel.localPort}</span></td><td><span class="table-addr">:${tunnel.remotePort}</span></td><td><span class="table-desc">${bound}</span></td><td>${status}</td><td><div class="row-actions">${actions}</div></td>`;
+      list.appendChild(tr);
+    });
+  }
+
   function renderTargets() {
     const cur = state.targets.find((t) => t.id === state.current);
     $('currentTargetName').textContent = cur?.name || '未配置';
@@ -64,7 +81,7 @@
     });
   }
 
-  const ACTIONS = { login:'登录', auth_challenge:'认证挑战', add_target:'添加目标', update_target:'编辑目标', reorder_targets:'排序目标', delete_target:'删除目标', switch_target:'切换目标', rdp_enable:'RDP 开启', rdp_disable:'RDP 关闭', whitelist_add:'加入白名单', whitelist_remove:'移出白名单', proxy_open:'代理开启', proxy_close:'代理关闭', change_password:'修改密码', create_access_link:'生成访问链接', access_link_redeem:'消费访问链接' };
+  const ACTIONS = { login:'登录', auth_challenge:'认证挑战', add_target:'添加目标', update_target:'编辑目标', reorder_targets:'排序目标', delete_target:'删除目标', switch_target:'切换目标', rdp_enable:'RDP 开启', rdp_disable:'RDP 关闭', whitelist_add:'加入白名单', whitelist_remove:'移出白名单', proxy_open:'代理开启', proxy_close:'代理关闭', create_tunnel:'新建隧道', delete_tunnel:'删除隧道', change_password:'修改密码', create_access_link:'生成访问链接', access_link_redeem:'消费访问链接' };
 
   function renderAudit(data) {
     const entries = data.entries || [];
@@ -100,12 +117,12 @@
 
   async function load() {
     const isAudit = state.connType === 'audit';
-    const [page, targets, logData] = await Promise.all([
-      req('/api/page-data'), req('/api/proxy-targets'),
+    const [page, targets, tunnels, logData] = await Promise.all([
+      req('/api/page-data'), req('/api/proxy-targets'), req('/api/tunnels'),
       isAudit ? req('/api/audit-log?limit=100') : req(`/api/connections/summary?type=${state.connType}`),
     ]);
-    state.page = page; state.targets = targets.targets || []; state.current = targets.currentTarget || '';
-    renderStatus(); renderTargets();
+    state.page = page; state.targets = targets.targets || []; state.current = targets.currentTarget || ''; state.tunnels = tunnels.tunnels || [];
+    renderStatus(); renderTunnels(); renderTargets();
     if (isAudit) renderAudit(logData); else renderConnSummary(logData);
     $('lastUpdated').textContent = `同步于 ${new Date().toLocaleTimeString()}`;
   }
@@ -116,7 +133,7 @@
   }
 
   // Navigation
-  const VIEW_TITLES = { dashboard: '概览', targets: '代理目标', logs: '日志审计' };
+  const VIEW_TITLES = { dashboard: '概览', targets: '代理目标', tunnels: '隧道管理', logs: '日志审计' };
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
@@ -147,7 +164,19 @@
   function openTargetDialog(t = null) {
     const f = $('targetForm'); state.editing = t?.id || null;
     f.reset();
-    if (t) { f.elements.name.value = t.name; f.elements.host.value = t.host; f.elements.port.value = t.port; f.elements.access.value = t.access || 'protected'; f.elements.description.value = t.description || ''; }
+    const selector = f.elements.tunnelId;
+    selector.innerHTML = '<option value="common">通用隧道</option><option value="common-tcp">通用 TCP</option><option value="common-https">通用 HTTPS</option>';
+    state.tunnels.filter((tunnel) => !tunnel.builtin && (!tunnel.targetId || tunnel.targetId === t?.id)).forEach((tunnel) => {
+      const option = document.createElement('option');
+      option.value = tunnel.id;
+      option.textContent = `${tunnel.name} (${tunnel.protocol.toUpperCase()} :${tunnel.remotePort})`;
+      selector.appendChild(option);
+    });
+    if (t) {
+      f.elements.name.value = t.name; f.elements.host.value = t.host; f.elements.port.value = t.port;
+      f.elements.access.value = t.access || 'protected'; f.elements.description.value = t.description || '';
+      f.elements.tunnelId.value = t.tunnelId || 'common';
+    }
     $('targetDialogTitle').textContent = t ? '编辑代理目标' : '添加代理目标';
     $('targetSubmit').textContent = t ? '保存' : '添加';
     $('targetDialog').showModal();
@@ -206,6 +235,24 @@
       const editing = state.editing;
       await req(editing ? `/api/proxy-targets/${encodeURIComponent(editing)}` : '/api/proxy-targets', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(d) });
       e.currentTarget.reset(); $('targetDialog').close(); toast(editing ? '目标已更新' : '目标已添加'); await load();
+    } catch (e2) { toast(e2.message, true); }
+  });
+
+  $('addTunnelBtn').addEventListener('click', () => { $('tunnelForm').reset(); $('tunnelDialog').showModal(); });
+
+  $('tunnelsList').addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-tunnel-action]'); if (!btn) return;
+    if (btn.dataset.tunnelAction !== 'delete' || !confirm('确定删除这条专用隧道吗？')) return;
+    try { await req(`/api/tunnels/${encodeURIComponent(btn.dataset.id)}`, { method: 'DELETE' }); toast('隧道已删除'); await load(); } catch (e2) { toast(e2.message, true); }
+  });
+
+  $('tunnelForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.currentTarget).entries());
+    if (d.localPort) d.localPort = Number(d.localPort); else delete d.localPort;
+    try {
+      await req('/api/tunnels', { method: 'POST', body: JSON.stringify(d) });
+      e.currentTarget.reset(); $('tunnelDialog').close(); toast('隧道已创建，FRP 正在重启'); await load();
     } catch (e2) { toast(e2.message, true); }
   });
 

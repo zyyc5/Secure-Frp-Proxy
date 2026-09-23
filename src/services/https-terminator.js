@@ -82,11 +82,11 @@ const parseHostSubPrefix = (buf) => {
 
 const selectTarget = (subPrefix) => {
   const config = configManager.getAll();
-  if (subPrefix && Array.isArray(config?.PROXY_TARGETS)) {
-    const hit = config.PROXY_TARGETS.find((target) => String(target?.name || '').toLowerCase() === subPrefix.toLowerCase());
-    if (hit) return { host: hit.host, port: hit.port, access: hit.access, matched: true };
-  }
-  return null;
+  const genericTargets = (config?.PROXY_TARGETS || []).filter((target) => ['common', 'common-https'].includes(target.tunnelId || 'common'));
+  if (!subPrefix || !genericTargets.length) return null;
+  const hit = genericTargets.find((target) => String(target?.name || '').toLowerCase() === subPrefix.toLowerCase());
+  if (!hit) return null;
+  return { host: hit.host, port: hit.port, access: hit.access, matched: true };
 };
 
 const connectionSource = (socket) => socket._parent || socket;

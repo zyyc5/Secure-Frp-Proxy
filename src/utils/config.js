@@ -28,7 +28,7 @@ class ConfigManager {
       this.envPath = path.join(configDir, '.env');
       await loadEnvFile(this.envPath);
       const configFile = path.join(configDir, `${env}.json`);
-      
+
       // 检查配置文件是否存在
       try {
         await fs.access(configFile);
@@ -121,8 +121,39 @@ class ConfigManager {
     const selfIndex = c.PROXY_TARGETS.findIndex((target) => String(target.name).toLowerCase() === 'self' && target.id !== SELF_TARGET.id);
     if (selfIndex !== -1) {
       const previousId = c.PROXY_TARGETS[selfIndex].id;
-      c.PROXY_TARGETS[selfIndex] = { ...SELF_TARGET };
+      c.PROXY_TARGETS[selfIndex] = { ...SELF_TARGET, description: c.PROXY_TARGETS[selfIndex]?.description || SELF_TARGET.description };
       if (c.CURRENT_PROXY_TARGET === previousId) c.CURRENT_PROXY_TARGET = SELF_TARGET.id;
+    }
+
+    if (!Array.isArray(c.TUNNELS)) c.TUNNELS = [];
+    const tunnelIds = new Set();
+    c.TUNNELS.forEach((tunnel, index) => {
+      if (!tunnel || !tunnel.id || tunnelIds.has(tunnel.id)) throw new Error(`Invalid tunnel at index ${index}`);
+      if (!['tcp', 'https'].includes(tunnel.protocol)) throw new Error(`Invalid tunnel protocol: ${tunnel.id}`);
+      if (!['builtin', 'dedicated'].includes(tunnel.role)) throw new Error(`Invalid tunnel role: ${tunnel.id}`);
+      if (!Number.isInteger(Number(tunnel.localPort)) || Number(tunnel.localPort) < 1 || Number(tunnel.localPort) > 65535) throw new Error(`Invalid tunnel localPort: ${tunnel.id}`);
+      if (!Number.isInteger(Number(tunnel.remotePort)) || Number(tunnel.remotePort) < 1 || Number(tunnel.remotePort) > 65535) throw new Error(`Invalid tunnel remotePort: ${tunnel.id}`);
+      tunnel.localPort = Number(tunnel.localPort);
+      tunnel.remotePort = Number(tunnel.remotePort);
+      tunnel.localHost = tunnel.localHost || '127.0.0.1';
+      tunnel.targetId = tunnel.role === 'dedicated' ? (tunnel.targetId || null) : null;
+      tunnelIds.add(tunnel.id);
+    });
+
+    c.PROXY_TARGETS.forEach((target) => {
+      target.tunnelId = target.tunnelId || 'common';
+      const validTunnel = target.tunnelId === 'common' || target.tunnelId === 'common-tcp' || target.tunnelId === 'common-https' ||
+        c.TUNNELS.some((tunnel) => tunnel.id === target.tunnelId && tunnel.role === 'dedicated');
+      if (!validTunnel) throw new Error(`Invalid tunnel binding for proxy target: ${target.id}`);
+      if (target.tunnelId !== 'common' && c.TUNNELS.some((tunnel) => tunnel.id === target.tunnelId)) {
+        const tunnel = c.TUNNELS.find((entry) => entry.id === target.tunnelId);
+        tunnel.targetId = target.id;
+      }
+    });
+
+    const dedicatedBound = c.TUNNELS.filter((tunnel) => tunnel.role === 'dedicated' && tunnel.targetId);
+    if (new Set(dedicatedBound.map((tunnel) => tunnel.targetId)).size !== dedicatedBound.length) {
+      throw new Error('A dedicated tunnel can only be bound to one proxy target');
     }
   }
 
@@ -157,7 +188,7 @@ class ConfigManager {
     try {
       // 检查写权限
       await fs.access(path.dirname(this.configPath), fs.constants.W_OK);
-      
+
       // 尝试写入文件
       const tempPath = `${this.configPath}.${process.pid}.tmp`;
       await fs.writeFile(tempPath, JSON.stringify(this.config, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
@@ -168,7 +199,7 @@ class ConfigManager {
       console.error(`[ERROR] 无法写入文件: ${this.configPath}`);
       console.error(`[ERROR] 请检查文件权限和磁盘空间`);
       console.error(`[ERROR] 错误详情: ${err.message}`);
-      
+
       // 提供解决方案建议
       if (err.code === 'EACCES') {
         console.error(`[SOLUTION] 权限问题解决方案:`);
@@ -176,7 +207,7 @@ class ConfigManager {
         console.error(`2. 在Windows上以管理员身份运行: icacls "${this.configPath}" /grant Everyone:F`);
         console.error(`3. 重新构建Docker镜像: docker-compose down && docker-compose up -d --build`);
       }
-      
+
       throw err;
     }
   }
@@ -198,4 +229,4 @@ class ConfigManager {
 // 创建单例实例
 const configManager = new ConfigManager();
 
-module.exports = configManager; 
+module.exports = configManager;
