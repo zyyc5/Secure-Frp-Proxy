@@ -231,12 +231,13 @@
 
   $('targetForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.currentTarget).entries()); d.port = Number(d.port);
+    const form = e.currentTarget;
+    const d = Object.fromEntries(new FormData(form).entries()); d.port = Number(d.port);
     if (!d.name || !d.host || !Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return toast('请填写有效的名称、地址和端口', true);
     try {
       const editing = state.editing;
       await req(editing ? `/api/proxy-targets/${encodeURIComponent(editing)}` : '/api/proxy-targets', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(d) });
-      e.currentTarget.reset(); $('targetDialog').close(); toast(editing ? '目标已更新' : '目标已添加'); await load();
+      form.reset(); $('targetDialog').close(); toast(editing ? '目标已更新' : '目标已添加'); await load();
     } catch (e2) { toast(e2.message, true); }
   });
 
@@ -264,19 +265,21 @@
 
   $('tunnelForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.currentTarget).entries());
+    const form = e.currentTarget;
+    const d = Object.fromEntries(new FormData(form).entries());
     if (d.localPort) d.localPort = Number(d.localPort); else delete d.localPort;
     try {
       const result = await req('/api/tunnels', { method: 'POST', body: JSON.stringify(d) });
       if (result?.tunnel) { state.tunnels.push(result.tunnel); renderTunnels(); }
-      e.currentTarget.reset(); $('tunnelDialog').close(); toast('隧道已创建，FRP 正在重启');
+      form.reset(); $('tunnelDialog').close(); toast('隧道已创建，FRP 正在重启');
       await refreshAfterTunnelChange();
     } catch (e2) { toast(e2.message, true); }
   });
 
   $('passwordForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const d = Object.fromEntries(new FormData(e.currentTarget).entries());
+    const form = e.currentTarget;
+    const d = Object.fromEntries(new FormData(form).entries());
     if (!d.userName || !d.newPassword || d.newPassword.length < 12) return toast('用户名不能为空，密码至少 12 位', true);
     if (d.newPassword !== d.confirmPassword) return toast('两次输入的密码不一致', true);
     try { await req('/api/change-password', { method: 'POST', body: JSON.stringify(d) }); $('passwordDialog').close(); toast('凭据已更新，请重新登录'); } catch (e2) { toast(e2.message, true); }
