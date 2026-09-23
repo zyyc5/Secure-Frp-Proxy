@@ -234,6 +234,7 @@
     const form = e.currentTarget;
     const d = Object.fromEntries(new FormData(form).entries()); d.port = Number(d.port);
     if (!d.name || !d.host || !Number.isInteger(d.port) || d.port < 1 || d.port > 65535) return toast('请填写有效的名称、地址和端口', true);
+    if (state.targets.some((target) => target.id !== state.editing && (target.name || '').trim().toLowerCase() === d.name.trim().toLowerCase())) return toast('目标名称已存在', true);
     try {
       const editing = state.editing;
       await req(editing ? `/api/proxy-targets/${encodeURIComponent(editing)}` : '/api/proxy-targets', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(d) });
@@ -268,6 +269,7 @@
     const form = e.currentTarget;
     const d = Object.fromEntries(new FormData(form).entries());
     if (d.localPort) d.localPort = Number(d.localPort); else delete d.localPort;
+    if (state.tunnels.some((tunnel) => (tunnel.name || '').trim().toLowerCase() === d.name.trim().toLowerCase())) return toast('隧道名称已存在', true);
     try {
       const result = await req('/api/tunnels', { method: 'POST', body: JSON.stringify(d) });
       if (result?.tunnel) { state.tunnels.push(result.tunnel); renderTunnels(); }

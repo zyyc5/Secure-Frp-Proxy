@@ -250,6 +250,23 @@ main { display: flex; min-height: 100vh; }
 }
 .dialog textarea { resize: vertical; }
 .dialog input:focus, .dialog textarea:focus { outline: 2px solid var(--accent-light); border-color: var(--accent); }
+.dialog select {
+  appearance: none;
+  display: block; width: 100%; margin-top: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 9px 38px 9px 11px; font: inherit; font-size: 13px;
+  background-color: var(--surface); color: var(--text);
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a6a78' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 14px 14px;
+  cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.dialog select:hover { border-color: #c9d2d8; background-color: #fbfcfc; }
+.dialog select:focus { outline: 2px solid var(--accent-light); border-color: var(--accent); }
+.dialog select:disabled { color: var(--text-3); background-color: var(--bg); cursor: not-allowed; }
+.dialog select option { color: var(--text); background: var(--surface); }
+
 .form-hint { font-size: 12px; color: var(--text-3); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 

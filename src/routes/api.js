@@ -32,6 +32,11 @@ const validateTunnelBinding = (config, tunnelId, targetId, previousTargetId = nu
   return tunnelId;
 };
 
+const isDuplicateName = (values, name, excludeId = null) => {
+  const normalized = String(name || '').trim().toLowerCase();
+  return values.some((item) => item && item.id !== excludeId && String(item.name || '').trim().toLowerCase() === normalized);
+};
+
 const bindTunnel = (config, target) => {
   const generic = ['common', 'common-tcp', 'common-https'];
   (config.TUNNELS || []).forEach((tunnel) => {
@@ -111,6 +116,10 @@ const restartAfterResponse = (res, tunnelId) => {
 
 router.post('/tunnels', async (req, res) => {
   try {
+    const config = configManager.getAll();
+    if (isDuplicateName(config?.TUNNELS || [], req.body?.name)) {
+      return sendError(res, 409, '隧道名称已存在', 'tunnel_name_duplicate');
+    }
     const tunnel = await tunnelManager.create(req.body || {});
     audit(req, 'create_tunnel', { id: tunnel.id, protocol: tunnel.protocol, remote_port: tunnel.remotePort, local_port: tunnel.localPort });
     res.json({ success: true, tunnel });
@@ -118,7 +127,7 @@ router.post('/tunnels', async (req, res) => {
   } catch (error) {
     console.error('创建隧道失败:', error);
     const code = error.code || 'create_tunnel_failed';
-    const status = { control_plane_not_configured: 503, no_local_ports_available: 509, no_remote_ports_available: 503, local_port_in_use: 409 }[code] || 500;
+    const status = { control_plane_not_configured: 503, no_local_ports_available: 509, no_remote_ports_available: 503, local_port_in_use: 409, tunnel_name_duplicate: 409 }[code] || 500;
     sendError(res, status, error.message || '创建隧道失败', code);
   }
 });
@@ -151,6 +160,9 @@ router.post('/proxy-targets', async (req, res) => {
     }
 
     const newId = Date.now().toString();
+    if (isDuplicateName(config.PROXY_TARGETS || [], targetInput.name)) {
+      return sendError(res, 409, '目标名称已存在', 'target_name_duplicate');
+    }
     targetInput.tunnelId = validateTunnelBinding(config, targetInput.tunnelId, newId);
     const newTarget = {
       id: newId,
@@ -178,6 +190,9 @@ router.put('/proxy-targets/:id', async (req, res) => {
     const config = configManager.getAll();
     const targetIndex = config?.PROXY_TARGETS?.findIndex((target) => target.id === req.params.id) ?? -1;
     if (targetIndex < 0) return sendError(res, 404, '目标地址不存在');
+    if (isDuplicateName(config.PROXY_TARGETS || [], targetInput.name, req.params.id)) {
+      return sendError(res, 409, '目标名称已存在', 'target_name_duplicate');
+    }
     targetInput.tunnelId = validateTunnelBinding(config, targetInput.tunnelId, req.params.id, (config.PROXY_TARGETS[targetIndex] || {}).tunnelId);
     const previousTarget = config.PROXY_TARGETS[targetIndex];
     const updatedTarget = { ...previousTarget, id: req.params.id, ...targetInput };
