@@ -98,11 +98,23 @@ router.get('/tunnels', (req, res) => {
   });
 });
 
+const restartAfterResponse = (res, tunnelId) => {
+  let scheduled = false;
+  const schedule = () => {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => tunnelManager.restart(tunnelId), 1000);
+  };
+  res.once('finish', schedule);
+  res.once('close', schedule);
+};
+
 router.post('/tunnels', async (req, res) => {
   try {
     const tunnel = await tunnelManager.create(req.body || {});
     audit(req, 'create_tunnel', { id: tunnel.id, protocol: tunnel.protocol, remote_port: tunnel.remotePort, local_port: tunnel.localPort });
     res.json({ success: true, tunnel });
+    restartAfterResponse(res, tunnel.id);
   } catch (error) {
     console.error('创建隧道失败:', error);
     const code = error.code || 'create_tunnel_failed';
@@ -116,6 +128,7 @@ router.delete('/tunnels/:id', async (req, res) => {
     await tunnelManager.remove(req.params.id);
     audit(req, 'delete_tunnel', { id: req.params.id });
     res.json({ success: true });
+    restartAfterResponse(res, req.params.id);
   } catch (error) {
     console.error('删除隧道失败:', error);
     const code = error.code || 'delete_tunnel_failed';
