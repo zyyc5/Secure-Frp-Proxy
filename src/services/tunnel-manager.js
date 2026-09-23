@@ -70,7 +70,7 @@ const syncFromControlPlane = async (initialization) => {
 
 const allocateLocalPort = async (requestedPort) => {
   const reserved = reservedPorts();
-  let port = Number(requestPort);
+  let port = Number(requestedPort);
   if (!Number.isFinite(port)) {
     const config = configManager.getAll();
     port = Math.max(Number(config.TUNNEL_LOCAL_PORT_CURSOR || 0), nextCursor());
@@ -103,6 +103,8 @@ const setStatus = async (tunnelId, status) => {
     await configManager.saveConfig();
   }
 };
+
+let operationQueue = Promise.resolve();
 
 const withTunnelLock = (operation) => {
   operationQueue = operationQueue.catch(() => {}).then(operation);
@@ -186,8 +188,6 @@ const startDedicated = async () => {
 
 const stopDedicated = () => proxyInstances.stopAll();
 
-let operationQueue = Promise.resolve();
-
 module.exports = {
   allocateLocalPort,
   create,
@@ -198,3 +198,4 @@ module.exports = {
   stopDedicated,
   syncFromControlPlane
 };
+

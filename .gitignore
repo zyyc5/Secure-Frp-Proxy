@@ -19,3 +19,4 @@ deploy-local/
 cert-output/
 config/certs/
 production.json
+config/control-plane-tunnels.json
