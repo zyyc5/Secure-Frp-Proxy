@@ -24,6 +24,7 @@ const configPath = path.join(
 class FrpcManager {
   constructor() {
     this.frpcProcess = null;
+    this.restartQueue = Promise.resolve();
   }
 
   /**
@@ -45,7 +46,7 @@ class FrpcManager {
       return;
     }
     console.log("正在启动 frpc...");
-    
+
     // 在Linux下确保frpc文件有执行权限
     if (os.platform() !== "win32") {
       try {
@@ -55,7 +56,7 @@ class FrpcManager {
         console.warn("设置frpc执行权限失败:", err.message);
       }
     }
-    
+
     this.frpcProcess = spawn(frpcPath, ["-c", configPath], {
       stdio: "inherit", // 将 frpc 的输出重定向到 Node.js 的控制台
     });
@@ -94,7 +95,7 @@ class FrpcManager {
     });
   }
 
-  reStart() {
+  restartOnce() {
     console.log("尝试重启 frpc...");
     return new Promise((resolve) => {
       this.stop();
@@ -103,6 +104,12 @@ class FrpcManager {
         resolve();
       }, 2000);
     });
+  }
+
+  reStart() {
+    const next = this.restartQueue.catch(() => {}).then(() => this.restartOnce());
+    this.restartQueue = next.catch(() => {});
+    return next;
   }
 
   /**

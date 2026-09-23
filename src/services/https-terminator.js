@@ -185,6 +185,7 @@ const handleConnection = (clientSocket) => {
 
 const handleTlsConnection = (tlsSocket) => {
   const log = connectionLogger(tlsSocket);
+  tlsSocket.on('error', (error) => log(`tls socket error ${connectionLabel(tlsSocket)} error=${error.message}`));
   let firstPacket = Buffer.alloc(0);
   const onData = (data) => {
     firstPacket = Buffer.concat([firstPacket, data]);

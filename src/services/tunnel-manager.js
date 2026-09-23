@@ -147,9 +147,9 @@ const createLocked = async ({ name, protocol = 'tcp', localPort, targetId = null
     await frpcConfig.appendProxyConfig(remote.proxyConfig, tunnel.id);
     await configManager.saveConfig();
     const started = await proxyInstances.start(tunnel);
-    tunnel.status = started ? 'running' : 'proxy_error';
+    tunnel.status = started ? 'restarting' : 'proxy_error';
     await configManager.saveConfig();
-    await frpc.reStart();
+    if (started) scheduleFrpcRestart(tunnel.id);
     return serialize(tunnel);
   } catch (error) {
     tunnel.status = 'error';
@@ -175,7 +175,7 @@ const removeLocked = async (tunnelId) => {
   const config = configManager.getAll();
   config.TUNNELS = (config.TUNNELS || []).filter((entry) => entry.id !== tunnelId);
   await configManager.saveConfig();
-  await frpc.reStart();
+  scheduleFrpcRestart(tunnelId);
 };
 
 const startDedicated = async () => {
@@ -198,4 +198,3 @@ module.exports = {
   stopDedicated,
   syncFromControlPlane
 };
-

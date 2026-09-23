@@ -98,7 +98,7 @@ const startTcpInstance = (tunnel) => new Promise((resolve, reject) => {
     });
   });
   server.once('error', reject);
-  server.listen(tunnel.localPort, tunnel.localHost || '127.0.0.1', () => resolve(server));
+  server.listen(tunnel.localPort, tunnel.localHost || '127.0.0.1', () => resolve({ server }));
 });
 
 const startHttpsInstance = (tunnel) => {
@@ -109,6 +109,7 @@ const startHttpsInstance = (tunnel) => {
     minVersion: 'TLSv1.2',
     ALPNProtocols: ['http/1.1']
   }, (tlsSocket) => {
+    tlsSocket.on('error', () => {});
     readHttpHeader(tlsSocket, (socket, firstPacket) => {
       const { parseHostSubPrefix } = require('./https-terminator');
       const parsed = parseHostSubPrefix(firstPacket);
@@ -128,7 +129,7 @@ const startHttpsInstance = (tunnel) => {
     });
   });
   return new Promise((resolve, reject) => {
-    tlsServer.once('error', reject);
+    tlsServer.on('error', (error) => console.error('Dedicated HTTPS TLS error:', error.message));
     server.once('error', reject);
     server.listen(tunnel.localPort, tunnel.localHost || '127.0.0.1', () => resolve({ server, tlsServer }));
   });
