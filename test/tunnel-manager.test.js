@@ -46,6 +46,84 @@ test('starts and stops a dedicated local proxy instance', async (t) => {
   assert.equal(proxyInstances.isRunning(tunnel.id), false);
 });
 
+test('dedicated TCP proxy forwards post-handshake bytes exactly once', async (t) => {
+  const net = require('node:net');
+  const proxyInstances = require('../src/services/dedicated-proxy-instances');
+  const { PROXY_PROTOCOL_V2_SIGNATURE } = require('../src/utils/proxy-protocol');
+  const previousConfig = configManager.config;
+
+  const received = [];
+  const target = net.createServer((socket) => {
+    socket.on('data', (data) => {
+      received.push(data.toString());
+      if (received.join('').length >= 'FIRST-SECOND'.length) socket.end('TARGET-ACK');
+    });
+  });
+  const targetPort = await new Promise((resolve, reject) => {
+    target.once('error', reject);
+    target.listen(0, '127.0.0.1', () => resolve(target.address().port));
+  });
+
+  const tunnel = {
+    id: 'tnl-single-forward',
+    role: 'dedicated',
+    protocol: 'tcp',
+    localHost: '127.0.0.1',
+    localPort: 0,
+    targetId: 'target'
+  };
+  const localPort = await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+  tunnel.localPort = localPort;
+  configManager.config = {
+    PORT: 9108,
+    TCP_PROXY_PORT: 13389,
+    TUNNELS: [tunnel],
+    PROXY_TARGETS: [{ id: 'target', host: '127.0.0.1', port: targetPort, access: 'public' }]
+  };
+  t.after(async () => {
+    configManager.config = previousConfig;
+    await proxyInstances.stop(tunnel.id);
+    target.close();
+  });
+
+  assert.equal(await proxyInstances.start(tunnel), true);
+  const proxyHeader = Buffer.concat([
+    PROXY_PROTOCOL_V2_SIGNATURE,
+    Buffer.from([0x21, 0x11, 0x00, 0x0c]),
+    Buffer.from([203, 0, 113, 42]),
+    Buffer.from([192, 0, 2, 1, 0x1f, 0x90, 0x01, 0xbb])
+  ]);
+
+  const client = net.connect(localPort, '127.0.0.1');
+  const response = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.destroy();
+      reject(new Error('dedicated proxy did not forward the post-handshake payload once'));
+    }, 2000);
+    client.once('data', (data) => {
+      clearTimeout(timer);
+      resolve(data.toString());
+    });
+    client.once('error', reject);
+    client.write(proxyHeader);
+    client.write('FIRST-');
+    // Everything written after the forwarding pipe is established must reach the
+    // target once - a duplicate pipe corrupts TLS/CredSSP, which fails RDP.
+    setTimeout(() => client.write('SECOND'), 100);
+  });
+
+  assert.equal(response, 'TARGET-ACK');
+  assert.equal(received.join(''), 'FIRST-SECOND');
+  client.destroy();
+});
+
 test('removes a stale dedicated tunnel when the server record is already gone', async (t) => {
   const controlPlane = require('../src/services/control-plane-client');
   const proxyInstances = require('../src/services/dedicated-proxy-instances');
