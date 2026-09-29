@@ -205,8 +205,9 @@ class App {
 
   async syncControlPlane() {
     if (!process.env.CONTROL_PLANE_URL || !process.env.CONTROL_PLANE_API_KEY) return;
+    let result;
     try {
-      return await syncControlPlane();
+      result = await syncControlPlane();
     } catch (error) {
       console.error(`Control-plane startup sync failed: ${error.message}`);
     }
@@ -215,6 +216,7 @@ class App {
         onUpdated: () => httpsTerminator.reloadCertificates()
       });
     }
+    return result;
   }
 }
 
