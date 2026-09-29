@@ -80,3 +80,74 @@ test('removes a stale dedicated tunnel when the server record is already gone', 
   assert.deepEqual(configManager.get('TUNNELS'), []);
   assert.deepEqual(removedTunnelIds, [stale.id]);
 });
+
+test('dedicated TCP proxy waits for application data after PROXY protocol v2', async (t) => {
+  const net = require('node:net');
+  const proxyInstances = require('../src/services/dedicated-proxy-instances');
+  const { PROXY_PROTOCOL_V2_SIGNATURE } = require('../src/utils/proxy-protocol');
+  const previousConfig = configManager.config;
+
+  const target = net.createServer((socket) => {
+    socket.once('data', (data) => {
+      assert.equal(data.toString(), 'RDP-PACKET');
+      socket.end('TARGET-ACK');
+    });
+  });
+  const targetPort = await new Promise((resolve, reject) => {
+    target.once('error', reject);
+    target.listen(0, '127.0.0.1', () => resolve(target.address().port));
+  });
+
+  const tunnel = {
+    id: 'tnl-header-first',
+    role: 'dedicated',
+    protocol: 'tcp',
+    localHost: '127.0.0.1',
+    localPort: 0,
+    targetId: 'target'
+  };
+  const localPort = await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+  tunnel.localPort = localPort;
+  configManager.config = {
+    PORT: 9108,
+    TCP_PROXY_PORT: 13389,
+    TUNNELS: [tunnel],
+    PROXY_TARGETS: [{ id: 'target', host: '127.0.0.1', port: targetPort, access: 'public' }]
+  };
+  t.after(async () => {
+    configManager.config = previousConfig;
+    await proxyInstances.stop(tunnel.id);
+    target.close();
+  });
+
+  assert.equal(await proxyInstances.start(tunnel), true);
+  const proxyHeader = Buffer.concat([
+    PROXY_PROTOCOL_V2_SIGNATURE,
+    Buffer.from([0x21, 0x11, 0x00, 0x0c]),
+    Buffer.from([203, 0, 113, 42]),
+    Buffer.from([192, 0, 2, 1, 0x1f, 0x90, 0x01, 0xbb])
+  ]);
+  const client = net.connect(localPort, '127.0.0.1');
+  const response = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.destroy();
+      reject(new Error('dedicated proxy did not wait for and forward the first application packet'));
+    }, 1000);
+    client.once('data', (data) => {
+      clearTimeout(timer);
+      resolve(data.toString());
+    });
+    client.once('error', reject);
+    client.write(proxyHeader);
+    setTimeout(() => client.write('RDP-PACKET'), 20);
+  });
+  assert.equal(response, 'TARGET-ACK');
+  client.destroy();
+});

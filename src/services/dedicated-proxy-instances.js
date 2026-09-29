@@ -7,6 +7,8 @@ const rdpManager = require('./rdp-manager');
 const { normalizeIP, parseProxyProtocolV2 } = require('../utils/proxy-protocol');
 const { ForwardedForTransform } = require('../utils/http-forwarded-for');
 
+// Only guard slow target connects / PROXY protocol headers.
+// Long-lived RDP and other TCP sessions must not be killed by an inactivity timer.
 const CONNECTION_TIMEOUT = 30000;
 const servers = new Map();
 
@@ -15,8 +17,10 @@ const findTunnel = (tunnelId) => configManager.getAll()?.TUNNELS?.find((tunnel) 
 const findTarget = (tunnel) => configManager.getAll()?.PROXY_TARGETS?.find((target) => target.id === tunnel?.targetId);
 
 const pipe = (client, upstream) => {
-  upstream.setTimeout(CONNECTION_TIMEOUT, () => { upstream.destroy(); client.destroy(); });
-  client.setTimeout(CONNECTION_TIMEOUT, () => { client.destroy(); upstream.destroy(); });
+  // Once both sides are connected, forwarding is an established TCP session.
+  // RDP may legitimately stay idle while waiting for user interaction.
+  upstream.setTimeout(0);
+  client.setTimeout(0);
   client.pipe(upstream);
   upstream.pipe(client);
   client.on('error', () => upstream.destroy());
@@ -64,6 +68,15 @@ const readProxyHeader = (socket, onReady) => {
         socket.proxied = true;
       }
       const appData = header.present ? received.subarray(header.headerLength) : received;
+
+      // FRP may deliver the PROXY protocol header before the application's first
+      // byte. Wait for that first byte so target connect behavior matches the
+      // generic TCP proxy and the real application packet can be written.
+      if (!appData.length) {
+        socket.once('data', onData);
+        return;
+      }
+
       onReady(socket, appData);
     } catch (error) {
       socket.off('data', onData);
